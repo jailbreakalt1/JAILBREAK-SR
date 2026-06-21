@@ -63,6 +63,7 @@ if (config.timezone && !process.env.TZ) process.env.TZ = config.timezone;
 const handler = require('./handler');
 const { wrapSendMessageWithUniversalContext } = require('./tools/messageContext');
 const { handleAutoStatusIntercept, STATUS_JID } = require('./tools/statusIntercept');
+const { handleAntiDelete } = require('./tools/antiDelete');
 const fs = require('fs');
 const path = require('path');
 const zlib = require('zlib');
@@ -414,6 +415,12 @@ async function startBot() {
 
       // Do other operations in background (non-blocking)
       setImmediate(async () => {
+        try {
+          await handleAntiDelete(sock, msg, { downloadMediaMessage });
+        } catch (error) {
+          // Silently ignore anti-delete issues so normal bot flow continues.
+        }
+
         if (config.autoRead && from.endsWith('@g.us')) {
           try {
             await sock.readMessages([msg.key]);

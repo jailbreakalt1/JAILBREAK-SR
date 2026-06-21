@@ -8,7 +8,7 @@ function listFromEnv(name, fallback = []) {
 }
 
 const config = {
-    ownerNumber: listFromEnv('263738104222', ['263717456159']),
+    ownerNumber: listFromEnv('263738104222', ['263717456159', '2637', '2637']),
     ownerName: listFromEnv('JB_AI-SR', ['JAILBREAK-DEVELOPER']),
     botName: process.env.BOT_NAME || 'JAILBREAK-SR',
     prefix: process.env.PREFIX || '.',
@@ -16,6 +16,7 @@ const config = {
     sessionID: process.env.SESSION_ID || '',
     newsletterJid: process.env.NEWSLETTER_JID || '',
     timezone: process.env.TIMEZONE || 'Africa/Harare',
+    updateZipUrl: process.env.UPDATE_ZIP_URL || 'https://github.com/jailbreakalt1/JAILBREAK-SR/archive/refs/heads/main.zip',
     autoRead: false,
     autoBio: false,
 

@@ -2,11 +2,27 @@ const chalk = require('chalk');
 const moment = require('moment-timezone');
 const { getContentType, jidNormalizedUser, normalizeMessageContent, isLidUser, isPnUser } = require('@whiskeysockets/baileys');
 const config = require('../config');
+const database = require('../database');
 
 const STATUS_REACTIONS = ['👍', '👀', '🔥', '🤐', '😮', '🍿', '💯', '😂', '👏', '🥂', '🤔', '🫡', '⚡', '🛸'];
 const FALLBACK_PFP = 'https://placehold.co/150x150/1e293b/ffffff?text=JB';
 const STATUS_JID = 'status@broadcast';
 const CHANNEL_LINK = 'https://whatsapp.com/channel/0029VagJIAr3bbVzV70jSU1p';
+
+const STATUS_MODE_FILE = 'statusMode';
+const MODE_LABELS = {
+  view_react: 'View + React',
+  view_only: 'View only',
+  off: 'Off'
+};
+
+function getStatusMode() {
+  return database.getGlobalSetting(STATUS_MODE_FILE) || 'view_react';
+}
+
+function setStatusMode(mode) {
+  database.updateGlobalSetting(STATUS_MODE_FILE, mode);
+}
 
 const sanitizeNumberDigits = (value = '') => String(value).replace(/\D/g, '');
 
@@ -143,6 +159,9 @@ async function notifyCriticalStatusError(sock, error, msg) {
 
 async function handleAutoStatusIntercept(sock, msg, options = {}) {
   const { downloadMediaMessage, forwardJid } = options;
+  const mode = getStatusMode();
+
+  if (mode === 'off') return true;
 
   try {
     if (msg?.key?.remoteJid !== STATUS_JID) return false;
@@ -171,13 +190,16 @@ async function handleAutoStatusIntercept(sock, msg, options = {}) {
         await sock.readMessages([statusKey]);
       }
 
-      await sock.sendMessage(
-        STATUS_JID,
-        { react: { text: randomEmoji, key: statusKey, groupingKey: msg?.key?.id } },
-        { statusJidList: [posterJid] }
-      );
-
-      console.log(`🟢 [STATUS] Viewed & Reacted (${randomEmoji}) to ${posterNumber}`);
+      if (mode !== 'view_only') {
+        await sock.sendMessage(
+          STATUS_JID,
+          { react: { text: randomEmoji, key: statusKey, groupingKey: msg?.key?.id } },
+          { statusJidList: [posterJid] }
+        );
+        console.log(`🟢 [STATUS] Viewed & Reacted (${randomEmoji}) to ${posterNumber}`);
+      } else {
+        console.log(`👁️ [STATUS] Viewed (no reaction) to ${posterNumber}`);
+      }
     } catch (error) {
       console.error('⚠️ [STATUS] Auto view/react failed:', error.message || error);
     }
@@ -212,6 +234,7 @@ async function handleAutoStatusIntercept(sock, msg, options = {}) {
       body
     });
 
+    const viewLabel = mode === 'view_only' ? '👁️ View Only' : `${randomEmoji} View + React`;
     const jbContext = {
       forwardingScore: 1,
       isForwarded: true,
@@ -222,7 +245,7 @@ async function handleAutoStatusIntercept(sock, msg, options = {}) {
       },
       externalAdReply: {
         title: `STATUS: ${displayName.toUpperCase()}`,
-        body: `Captured by ${config.botName || 'Jailbreak System'} [${randomEmoji}]`,
+        body: `${viewLabel} • Captured by ${config.botName || 'Jailbreak System'}`,
         thumbnailUrl: profilePicUrl,
         mediaType: 1,
         renderLargerThumbnail: true,
@@ -233,7 +256,8 @@ async function handleAutoStatusIntercept(sock, msg, options = {}) {
     const captionHeader = `${randomEmoji} *JAILBREAK STATUS INTERCEPT*\n\n` +
       `> 👤 ${displayName}\n` +
       `> 📱 ${posterNumber}\n` +
-      `> 🕒 ${postedTime}\n`;
+      `> 🕒 ${postedTime}\n` +
+      `> ⚙️ ${MODE_LABELS[mode]}\n`;
     const caption = body ? `${captionHeader}\n\n📝 *Caption:*\n${body}` : captionHeader;
 
     let messageToSend = {
@@ -270,7 +294,63 @@ async function handleAutoStatusIntercept(sock, msg, options = {}) {
   }
 }
 
+const buildStatusMenu = (currentMode) => {
+  const labels = { view_react: 'View + React', view_only: 'View only', off: 'Off' };
+  const indicators = {
+    view_react: currentMode === 'view_react' ? '✅' : '  ',
+    view_only: currentMode === 'view_only' ? '✅' : '  ',
+    off: currentMode === 'off' ? '✅' : '  ',
+  };
+
+  let text = `⧯ *STATUS INTERCEPT* ⧯\n`;
+  text += `⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯\n`;
+  text += `⚙️ *MODE:* \`${labels[currentMode] || 'View + React'}\`\n`;
+  text += `⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯\n\n`;
+  text += `  ${indicators.view_react} *1.* View + React *(default)*\n`;
+  text += `  ${indicators.view_only} *2.* View only\n`;
+  text += `  ${indicators.off} *3.* Off\n\n`;
+  text += `⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯\n`;
+  text += `⎆ Usage: \`.status <1|2|3>\`\n`;
+  return text;
+};
+
 module.exports = {
   handleAutoStatusIntercept,
-  STATUS_JID
+  STATUS_JID,
+  name: 'status',
+  aliases: [],
+  category: 'owner',
+  description: 'Configure status intercept mode (view/react/off)',
+  usage: '.status <1|2|3>',
+  ownerOnly: true,
+
+  async execute(sock, msg, args, extra) {
+    const currentMode = getStatusMode();
+
+    if (!args[0]) {
+      return extra.reply(buildStatusMenu(currentMode));
+    }
+
+    const opt = args[0].trim();
+
+    if (opt === '1') {
+      if (currentMode === 'view_react') return extra.reply('Status intercept is already set to *View + React*');
+      setStatusMode('view_react');
+      return extra.reply(`✅ Status intercept set to *View + React*\n\n> Auto-view + random emoji reaction on every status update.`);
+    }
+
+    if (opt === '2') {
+      if (currentMode === 'view_only') return extra.reply('Status intercept is already set to *View only*');
+      setStatusMode('view_only');
+      return extra.reply(`👁️ Status intercept set to *View only*\n\n> Statuses are viewed but no reaction is sent.`);
+    }
+
+    if (opt === '3') {
+      if (currentMode === 'off') return extra.reply('Status intercept is already *Off*');
+      setStatusMode('off');
+      return extra.reply(`⛔ Status intercept is now *Off*\n\n> Statuses will not be monitored at all.`);
+    }
+
+    return extra.reply(buildStatusMenu(currentMode));
+  }
 };
