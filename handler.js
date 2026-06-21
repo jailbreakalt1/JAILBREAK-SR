@@ -4,6 +4,7 @@ const config = require('./config');
 const database = require('./database');
 const chalk = require('chalk');
 const { normalizeMessageContent } = require('@whiskeysockets/baileys');
+const { cleanNumber, resolvePhoneJid, getOwnPhoneJid } = require('./tools/jidCleanser');
 
 const badWords = [
   'fuck', 'fck', 'fuk', 'fvck', 'shit', 'sh1t', 'ass', 'azz', 'arse',
@@ -100,26 +101,39 @@ setInterval(() => {
   }
 }, 30 * 1000);
 
-async function resolveJidToPN(sock, jid) {
-  if (!jid || !jid.endsWith('@lid')) return jid;
-  try {
-    const pn = await sock.signalRepository.lidMapping.getPNForLID(jid);
-    if (pn) return pn;
-  } catch (_) {}
-  return jid;
-}
-
 function isOwner(jid, pushName) {
-  const sender = jid.split('@')[0].split(':')[0];
+  // `jid` is expected to already be a cleansed phone-number JID by the time
+  // it gets here (the global cleanser runs in index.js before handleMessage
+  // is ever called), but we strip defensively anyway - this must NEVER
+  // compare against a raw LID number, or the real owner gets mistaken for
+  // a random stranger and every owner-only command silently refuses to fire.
+  const sender = cleanNumber(jid);
   return config.ownerNumber.map(n => n.replace(/[^0-9]/g, '')).includes(sender) ||
     config.ownerName.some(name => name.toLowerCase() === (pushName || '').toLowerCase());
+}
+
+/**
+ * Compare a group-metadata participant id (`p.id`, which itself can be in
+ * @lid form for LID-addressed groups) against an already-cleansed sender
+ * jid, resolving the @lid side first so the comparison is always done on
+ * real phone numbers.
+ */
+async function participantMatches(sock, participantId, cleanSenderJid) {
+  if (!participantId || !cleanSenderJid) return false;
+  if (participantId === cleanSenderJid) return true;
+  const resolved = await resolvePhoneJid(sock, participantId);
+  return cleanNumber(resolved) === cleanNumber(cleanSenderJid);
 }
 
 async function isGroupAdmin(sock, jid, participant) {
   try {
     const meta = await sock.groupMetadata(jid);
     const participants = meta.participants || [];
-    return participants.some(p => p.id === participant && (p.admin === 'admin' || p.admin === 'superadmin'));
+    for (const p of participants) {
+      if (p.admin !== 'admin' && p.admin !== 'superadmin') continue;
+      if (await participantMatches(sock, p.id, participant)) return true;
+    }
+    return false;
   } catch (_) {
     return false;
   }
@@ -131,16 +145,13 @@ async function isBotAdmin(sock, jid) {
     const participants = meta.participants || [];
     const botJid = sock.user?.id;
     if (!botJid) return false;
-    const botNumber = botJid.split('@')[0].split(':')[0];
+    const botNumber = cleanNumber(botJid);
     for (const p of participants) {
       if (p.admin !== 'admin' && p.admin !== 'superadmin') continue;
-      if (p.id.startsWith(botNumber + '@') || p.id.startsWith(botNumber + ':')) return true;
+      if (cleanNumber(p.id) === botNumber) return true;
       if (p.id.endsWith('@lid')) {
-        const resolved = await resolveJidToPN(sock, p.id);
-        if (resolved && resolved !== p.id) {
-          const rn = resolved.split('@')[0].split(':')[0];
-          if (rn === botNumber) return true;
-        }
+        const resolved = await resolvePhoneJid(sock, p.id);
+        if (cleanNumber(resolved) === botNumber) return true;
       }
     }
     return false;
@@ -151,7 +162,15 @@ async function isBotAdmin(sock, jid) {
 
 async function handleMessage(sock, msg) {
   const from = msg.key?.remoteJid;
-  let sender = msg.key.participant || from;
+  // In a 1:1 chat, WhatsApp never sets `participant` - only groups do. So
+  // for an outgoing (fromMe) DM, `participant || from` used to fall back
+  // to `from`, which is the OTHER person's jid, not yours - the bot would
+  // think a message you sent to a friend came FROM that friend, fail the
+  // owner check, and silently refuse to trigger. When fromMe is true, the
+  // sender is unambiguously this account; never infer it from remoteJid.
+  let sender = msg.key?.fromMe
+    ? (getOwnPhoneJid(sock) || msg.key.participant || from)
+    : (msg.key.participant || from);
   const senderNum = sender?.split('@')[0] || '?';
   try {
     if (!from || !msg.message) { console.log(chalk.gray('  ⧈ ') + chalk.cyan('HANDLER') + chalk.gray(' ── ') + chalk.white(senderNum) + chalk.red(' NO MSG')); return; }
@@ -178,13 +197,17 @@ async function handleMessage(sock, msg) {
 
     const pushName = msg.pushName || '';
 
-    // Resolve LID to phone number JID so owner check works
-    const resolvedJid = sender.endsWith('@lid')
-      ? (await resolveJidToPN(sock, sender)) || sender
-      : sender;
-    if (resolvedJid !== sender) {
-      console.log(chalk.gray('  ⧈ ') + chalk.cyan('LIDMAP') + chalk.gray(' ── ') + chalk.white(senderNum) + chalk.gray(' → ') + chalk.yellowBright(resolvedJid.split('@')[0]));
-      sender = resolvedJid;
+    // `sender` already arrives as a clean phone-number JID (the global
+    // cleanser in index.js runs before handleMessage is ever called), but
+    // we resolve defensively here too in case this is ever invoked from
+    // somewhere that skipped the cleanser - an owner-only command must
+    // never refuse to fire just because it saw a raw LID.
+    if (sender.endsWith('@lid')) {
+      const resolved = await resolvePhoneJid(sock, sender);
+      if (resolved !== sender) {
+        console.log(chalk.gray('  ⧈ ') + chalk.cyan('LIDMAP') + chalk.gray(' ── ') + chalk.white(senderNum) + chalk.gray(' → ') + chalk.yellowBright(resolved.split('@')[0]));
+        sender = resolved;
+      }
     }
 
     const isGroup = from.endsWith('@g.us');
@@ -241,7 +264,7 @@ async function handleMessage(sock, msg) {
       },
     };
 
-    if (isGroup) {
+    if (isGroup && !isOwnerUser) {
       const gSettings = database.getGroupSettings(from);
       if (gSettings.antiword && badWordRegex.test(normalizeBody(body))) {
         return extra.reply(`⫎@${sender.split('@')[0]} - COMMAND BLOCKED - BAD WORD DETECTED 🚫⧯`, { mentions: [sender] });
@@ -299,6 +322,11 @@ async function handleAntilink(sock, msg, groupMetadata) {
     const from = msg.key?.remoteJid;
     if (!from || !from.endsWith('@g.us')) { console.log('[ANTILINK] not group'); return; }
 
+    // Never moderate the bot's own account. This account IS the owner, so
+    // a link the owner posts from their own phone must never get deleted
+    // or - worse - get the owner kicked from their own group by their own bot.
+    if (msg.key?.fromMe) { console.log('[ANTILINK] fromMe - skipped'); return; }
+
     const settings = database.getGroupSettings(from);
     if (!settings.antilink) { console.log('[ANTILINK] disabled for group'); return; }
 
@@ -314,7 +342,11 @@ async function handleAntilink(sock, msg, groupMetadata) {
     if (!linkRegex.test(body)) { console.log('[ANTILINK] no link match. body=' + body.slice(0, 60)); return; }
 
     const sender = msg.key.participant || msg.key.remoteJid;
-    const isGroupAdmin = (groupMetadata.participants || []).some(p => p.id === sender && (p.admin === 'admin' || p.admin === 'superadmin'));
+    let isGroupAdmin = false;
+    for (const p of (groupMetadata.participants || [])) {
+      if (p.admin !== 'admin' && p.admin !== 'superadmin') continue;
+      if (await participantMatches(sock, p.id, sender)) { isGroupAdmin = true; break; }
+    }
     if (isGroupAdmin) { console.log('[ANTILINK] sender is admin'); return; }
 
     const action = settings.antilinkAction || 'delete';
@@ -337,6 +369,9 @@ async function handleAntiword(sock, msg, groupMetadata) {
     const from = msg.key?.remoteJid;
     if (!from || !from.endsWith('@g.us')) return;
 
+    // Never moderate the bot's own account - see handleAntilink for why.
+    if (msg.key?.fromMe) return;
+
     const settings = database.getGroupSettings(from);
     if (!settings.antiword) return;
 
@@ -352,7 +387,11 @@ async function handleAntiword(sock, msg, groupMetadata) {
     if (!badWordRegex.test(normalized)) return;
 
     const sender = msg.key.participant || msg.key.remoteJid;
-    const isGroupAdmin = (groupMetadata.participants || []).some(p => p.id === sender && (p.admin === 'admin' || p.admin === 'superadmin'));
+    let isGroupAdmin = false;
+    for (const p of (groupMetadata.participants || [])) {
+      if (p.admin !== 'admin' && p.admin !== 'superadmin') continue;
+      if (await participantMatches(sock, p.id, sender)) { isGroupAdmin = true; break; }
+    }
     if (isGroupAdmin) return;
 
     const action = settings.antiwordAction || 'delete';
@@ -379,8 +418,9 @@ async function handleGroupUpdate(sock, update) {
     const memberCount = groupMetadata.participants?.length || 0;
 
     if (action === 'add' && settings.welcome) {
-      for (const participant of participants) {
-        const user = participant.split('@')[0];
+      for (const rawParticipant of participants) {
+        const participant = await resolvePhoneJid(sock, rawParticipant);
+        const user = cleanNumber(participant);
         let msg = settings.welcomeMessage
           .replace(/@user/g, `@${user}`)
           .replace(/@group/g, groupName)
@@ -395,8 +435,9 @@ async function handleGroupUpdate(sock, update) {
     }
 
     if (action === 'remove' && settings.goodbye) {
-      for (const participant of participants) {
-        const user = participant.split('@')[0];
+      for (const rawParticipant of participants) {
+        const participant = await resolvePhoneJid(sock, rawParticipant);
+        const user = cleanNumber(participant);
         let msg = settings.goodbyeMessage.replace(/@user/g, `@${user}`);
         await sock.sendMessage(jid, {
           text: msg,
@@ -407,19 +448,6 @@ async function handleGroupUpdate(sock, update) {
   } catch (err) {
     console.error('[HANDLER] handleGroupUpdate error:', err.message);
   }
-}
-
-function initializeAntiCall(sock) {
-  sock.ev.on('call', async (calls) => {
-    try {
-      for (const call of calls) {
-        if (call.status === 'offer') {
-          await sock.rejectCall(call.id, call.from);
-          await sock.sendMessage(call.from, { text: config.messages.ownerOnly });
-        }
-      }
-    } catch (_) {}
-  });
 }
 
 async function getGroupMetadata(sock, jid) {
@@ -435,7 +463,6 @@ module.exports = {
   handleAntilink,
   handleAntiword,
   handleGroupUpdate,
-  initializeAntiCall,
   getGroupMetadata,
   getCommands: () => commands,
 };

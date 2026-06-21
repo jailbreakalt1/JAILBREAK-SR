@@ -62,6 +62,7 @@ const config = require('./config');
 if (config.timezone && !process.env.TZ) process.env.TZ = config.timezone;
 const handler = require('./handler');
 const { wrapSendMessageWithUniversalContext } = require('./tools/messageContext');
+const { cleanseMessage } = require('./tools/jidCleanser');
 const { handleAutoStatusIntercept, STATUS_JID } = require('./tools/statusIntercept');
 const { handleAntiDelete } = require('./tools/antiDelete');
 const fs = require('fs');
@@ -305,9 +306,6 @@ async function startBot() {
         await sock.updateProfileStatus(`${config.botName} | Active 24/7`);
       }
 
-      // Initialize anti-call feature
-      handler.initializeAntiCall(sock);
-
       // Cleanup old chats (keep only active ones, e.g., last touched <1 day)
       const now = Date.now();
       for (const [jid, chatMsgs] of store.messages.entries()) {
@@ -356,7 +354,17 @@ async function startBot() {
         continue; // Silently ignore system messages
       }
 
-      const sender = msg.key.participant || from;
+      // ── GLOBAL JID CLEANSER ──────────────────────────────────────────
+      // Run BEFORE anything else touches this message. Converts every LID
+      // (@lid) into the sender's real phone-number JID and strips any
+      // ":device" suffix (e.g. "263717456159:0") everywhere a jid can
+      // appear (key.participant, key.remoteJid, contextInfo.participant,
+      // contextInfo.mentionedJid[...]). From this point on, NOTHING in
+      // the bot - handler, commands, tools - should ever see a LID again.
+      await cleanseMessage(sock, msg);
+
+      const cleanFrom = msg.key.remoteJid || from;
+      const sender = msg.key.participant || cleanFrom;
       const senderNum = sender.split('@')[0];
       const senderSrv = sender.split('@')[1] || '?';
       const shortId = msg.key.id.slice(0, 10);
@@ -385,12 +393,12 @@ async function startBot() {
       processedMessages.add(msgId);
 
       // Store message FIRST (before processing)
-      // from already defined above in DM block check
+      // cleanFrom already defined above, derived from the cleansed key
       if (msg.key && msg.key.id) {
-        if (!store.messages.has(from)) {
-          store.messages.set(from, new Map());
+        if (!store.messages.has(cleanFrom)) {
+          store.messages.set(cleanFrom, new Map());
         }
-        const chatMsgs = store.messages.get(from);
+        const chatMsgs = store.messages.get(cleanFrom);
         chatMsgs.set(msg.key.id, msg);
 
         // Cleanup: Keep only last 20 per chat (reduced from 200)
@@ -421,14 +429,14 @@ async function startBot() {
           // Silently ignore anti-delete issues so normal bot flow continues.
         }
 
-        if (config.autoRead && from.endsWith('@g.us')) {
+        if (config.autoRead && cleanFrom.endsWith('@g.us')) {
           try {
             await sock.readMessages([msg.key]);
           } catch (e) {
             // Silently handle
           }
         }
-        if (from.endsWith('@g.us')) {
+        if (cleanFrom.endsWith('@g.us')) {
           try {
             const groupMetadata = await handler.getGroupMetadata(sock, msg.key.remoteJid);
             if (groupMetadata) {

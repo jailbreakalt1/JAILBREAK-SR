@@ -3,6 +3,7 @@ const yts = require('yt-search');
 const config = require('../config');
 const APIs = require('../tools/api');
 const { toAudio } = require('../tools/converter');
+const { cleanNumber, toPhoneJid } = require('../tools/jidCleanser');
 
 const CHANNEL_URL = 'https://whatsapp.com/channel/0029Vb6zZKpKbYMFqRWgx62q';
 const AXIOS_HEADERS = {
@@ -101,8 +102,8 @@ module.exports = {
 
       const { payload, mediaUrl } = await resolveAudioDownload(song.url);
       const audio = await normalizeAudio(await downloadBuffer(mediaUrl));
-      const senderJid = extra.sender || msg.key.participant || msg.key.remoteJid;
-      const senderNum = senderJid.split('@')[0];
+      const senderJid = toPhoneJid(extra.sender || msg.key.participant || msg.key.remoteJid);
+      const senderNum = cleanNumber(senderJid);
       const fileName = `${sanitize(song.author, 'Unknown Artist')} - ${sanitize(payload.title || song.info.title)}.${audio.ext}`;
 
       await sock.sendMessage(from, {
