@@ -3,8 +3,8 @@
  *
  * This does NOT hardcode a command list. It reads the live command
  * registry (via extra.getCommands(), supplied by handler.js) at the
- * moment the command runs, so any command file you drop into /media
- * or /utils is picked up automatically - nothing here needs editing
+ * moment the command runs, so any command file you drop into /cmd
+ * or /tools is picked up automatically - nothing here needs editing
  * when you add, remove, or rename a command.
  */
 
@@ -12,7 +12,7 @@ const config = require('../config');
 
 const CATEGORY_META = {
   general: { label: 'GENERAL', emoji: '◈' },
-  media: { label: 'MEDIA', emoji: '🎬' },
+  cmd: { label: 'CMD', emoji: '🎬' },
   admin: { label: 'GROUP ADMIN', emoji: '🛡️' },
   owner: { label: 'OWNER', emoji: '👑' },
   misc: { label: 'MISC', emoji: '✦' },
@@ -61,8 +61,8 @@ module.exports = {
       list.sort((a, b) => a.name.localeCompare(b.name));
     }
 
-    // Order: general, media, admin, owner, then anything else alphabetically.
-    const preferredOrder = ['general', 'media', 'admin', 'owner'];
+    // Order: general, cmd, admin, owner, then anything else alphabetically.
+    const preferredOrder = ['general', 'cmd', 'admin', 'owner'];
     const remaining = [...grouped.keys()]
       .filter(k => !preferredOrder.includes(k))
       .sort();

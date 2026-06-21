@@ -2,8 +2,8 @@ process.env.PUPPETEER_SKIP_DOWNLOAD = 'true';
 process.env.PUPPETEER_SKIP_CHROMIUM_DOWNLOAD = 'true';
 process.env.PUPPETEER_CACHE_DIR = process.env.PUPPETEER_CACHE_DIR || '/tmp/puppeteer_cache_disabled';
 
-const { initializeTempSystem } = require('./utils/tempManager');
-const { startCleanup } = require('./utils/cleanup');
+const { initializeTempSystem } = require('./tools/tempManager');
+const { startCleanup } = require('./tools/cleanup');
 initializeTempSystem();
 startCleanup();
 const originalConsoleLog = console.log;
@@ -61,8 +61,8 @@ const qrcode = require('qrcode-terminal');
 const config = require('./config');
 if (config.timezone && !process.env.TZ) process.env.TZ = config.timezone;
 const handler = require('./handler');
-const { wrapSendMessageWithUniversalContext } = require('./utils/messageContext');
-const { handleAutoStatusIntercept, STATUS_JID } = require('./utils/statusIntercept');
+const { wrapSendMessageWithUniversalContext } = require('./tools/messageContext');
+const { handleAutoStatusIntercept, STATUS_JID } = require('./tools/statusIntercept');
 const fs = require('fs');
 const path = require('path');
 const zlib = require('zlib');
@@ -481,7 +481,7 @@ process.on('uncaughtException', (err) => {
   // Handle ENOSPC errors gracefully without crashing
   if (err.code === 'ENOSPC' || err.errno === -28 || err.message?.includes('no space left on device')) {
     console.error('⚠️ ENOSPC Error: No space left on device. Attempting cleanup...');
-    const { cleanupOldFiles } = require('./utils/cleanup');
+    const { cleanupOldFiles } = require('./tools/cleanup');
     cleanupOldFiles();
     console.warn('⚠️ Cleanup completed. Bot will continue but may experience issues until space is freed.');
     return; // Don't crash, just log and continue
@@ -492,7 +492,7 @@ process.on('unhandledRejection', (err) => {
   // Handle ENOSPC errors gracefully
   if (err.code === 'ENOSPC' || err.errno === -28 || err.message?.includes('no space left on device')) {
     console.warn('⚠️ ENOSPC Error in promise: No space left on device. Attempting cleanup...');
-    const { cleanupOldFiles } = require('./utils/cleanup');
+    const { cleanupOldFiles } = require('./tools/cleanup');
     cleanupOldFiles();
     console.warn('⚠️ Cleanup completed. Bot will continue but may experience issues until space is freed.');
     return; // Don't crash, just log and continue

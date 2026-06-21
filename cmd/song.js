@@ -1,8 +1,8 @@
 const axios = require('axios');
 const yts = require('yt-search');
 const config = require('../config');
-const APIs = require('../utils/api');
-const { toAudio } = require('../utils/converter');
+const APIs = require('../tools/api');
+const { toAudio } = require('../tools/converter');
 
 const CHANNEL_URL = 'https://whatsapp.com/channel/0029Vb6zZKpKbYMFqRWgx62q';
 const AXIOS_HEADERS = {
@@ -78,7 +78,7 @@ const normalizeAudio = async (buffer) => {
 module.exports = {
   name: 'song',
   aliases: ['play', 'music', 'yta'],
-  category: 'media',
+  category: 'cmd',
   description: 'Search a YouTube track and send it as a document',
   usage: '.song <song name or YouTube link>',
 

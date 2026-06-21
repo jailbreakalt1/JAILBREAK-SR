@@ -3,13 +3,13 @@
  */
 
 const yts = require('yt-search');
-const APIs = require('../utils/api');
+const APIs = require('../tools/api');
 
 const config = require('../config');
 module.exports = {
   name: 'ytvideo',
   aliases: ['ytv', 'ytmp4', 'ytvid', 'video'],
-  category: 'media',
+  category: 'cmd',
   description: 'Download video from YouTube',
   usage: '.video <video name or URL>',
 

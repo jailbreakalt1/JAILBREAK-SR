@@ -40,7 +40,7 @@ function loadCommands() {
   // Scan these folders for command modules. Any .js file that exports
   // an object with a `name` property is registered automatically -
   // no need to add a require() line here when you drop in a new command.
-  const commandDirs = ['media', 'utils'];
+  const commandDirs = ['cmd', 'tools'];
   const thisFile = path.basename(__filename);
 
   for (const dir of commandDirs) {

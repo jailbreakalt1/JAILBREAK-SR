@@ -46,7 +46,7 @@ const identifySong = async (buffer) => {
 module.exports = {
   name: 'find',
   aliases: ['shazam', 'id', 'whats', 'what is', 'name'],
-  category: 'media',
+  category: 'cmd',
   description: 'Identify a song from replied audio/video',
   usage: '.find (reply to audio/video)',
 
