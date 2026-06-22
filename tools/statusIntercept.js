@@ -4,7 +4,9 @@ const { getContentType, jidNormalizedUser, normalizeMessageContent, isLidUser, i
 const config = require('../config');
 const database = require('../database');
 
-const STATUS_REACTIONS = ['👍', '👀', '🔥', '🤐', '😮', '🍿', '💯', '😂', '👏', '🥂', '🤔', '🫡', '⚡', '🛸'];
+// Keep auto-reactions neutral and broadly appropriate because a status can be sad, serious, funny, or celebratory.
+// Removed reactions that can read as mocking, judgmental, flirty, or too context-specific (for example 😂, 🤔, 🔥).
+const STATUS_REACTIONS = ['👍', '❤️', '🙏', '🤝', '✨', '🌟', '🫶'];
 const FALLBACK_PFP = 'https://placehold.co/150x150/1e293b/ffffff?text=JB';
 const STATUS_JID = 'status@broadcast';
 const CHANNEL_LINK = 'https://whatsapp.com/channel/0029VagJIAr3bbVzV70jSU1p';
