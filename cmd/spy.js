@@ -74,6 +74,7 @@ module.exports = {
       let profilePic;
       try {
         profilePic = await sock.profilePictureUrl(targetJid, 'image');
+        if (!profilePic) profilePic = DEFAULT_PROFILE_PIC;
       } catch {
         profilePic = DEFAULT_PROFILE_PIC;
       }
@@ -119,8 +120,10 @@ ${validation}
 ⎝
 > ☬ *J~B F.B.I* ☬`;
 
+      const imageContent = Buffer.isBuffer(profilePic) ? profilePic : { url: String(profilePic || DEFAULT_PROFILE_PIC) };
+
       await sock.sendMessage(from, {
-        image: { url: profilePic },
+        image: imageContent,
         caption: responseText,
         contextInfo: {
           ...jbContext,
