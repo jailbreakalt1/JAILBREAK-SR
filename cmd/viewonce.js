@@ -24,6 +24,15 @@ const buildOwnerHeader = (msg, mediaType) => {
   return `╔════════════════════╗\n   ╼ VIEW ONCE REVEAL ╾\n╚════════════════════╝\n⎛\n  ⧯ 𝙸𝙽𝚃𝙴𝚁𝙲𝙴𝙿𝚃𝙴𝙳\n  ◈ From: @${sender}\n  ◈ Origin Chat: ${origin}\n  ◈ Type: \`${mediaType}\`\n⎝\n> ☬ *JAILBREAK SIGHT* ☬`;
 };
 
+const buildDownloadableMessage = (chatId, contextInfo, innerMessage) => ({
+  key: {
+    remoteJid: chatId,
+    id: contextInfo?.stanzaId,
+    participant: contextInfo?.participant
+  },
+  message: innerMessage
+});
+
 const getMessageType = (message) => {
   if (!message) return null;
   if (message.imageMessage) return 'imageMessage';
@@ -95,8 +104,9 @@ module.exports = {
       }
 
       const { message: actualMsg, type: mtype } = viewOnceInfo;
+      const downloadableMsg = buildDownloadableMessage(chatId, ctx, actualMsg);
       const mediaBuffer = await downloadMediaMessage(
-        actualMsg,
+        downloadableMsg,
         'buffer',
         {},
         { logger: undefined, reuploadRequest: sock.updateMediaMessage?.bind(sock) }

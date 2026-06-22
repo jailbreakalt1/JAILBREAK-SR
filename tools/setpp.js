@@ -68,7 +68,7 @@ module.exports = {
         targetMessage,
         'buffer',
         {},
-        { logger: undefined, reuploadRequest: sock.updateMediaMessage }
+        { logger: undefined, reuploadRequest: sock.updateMediaMessage?.bind(sock) }
       );
 
       if (!mediaBuffer?.length) {
@@ -79,7 +79,7 @@ module.exports = {
       const padded = await toSquarePadded(mediaBuffer, ext, { style, color, size: 720 });
 
       const targetJid = isGroup ? from : bareJid(sock.user.id);
-      await sock.updateProfilePicture(targetJid, { url: padded });
+      await sock.updateProfilePicture(targetJid, padded);
 
       await extra.reply(`✅ ${isGroup ? 'Group' : 'Profile'} picture updated (padded to square, style: ${style}).`);
       if (typeof extra.react === 'function') await extra.react('✅');
