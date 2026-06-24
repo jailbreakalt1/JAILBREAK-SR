@@ -42,6 +42,52 @@ const searchGenius = async (query) => {
  * extract from the [data-lyrics-container] divs — the same technique
  * every Genius client library uses.
  */
+/**
+ * Extract the full inner HTML of every <div data-lyrics-container="true"> on
+ * the page, correctly handling nested <div> tags (e.g. Genius's annotation/
+ * referent wrappers around individual words).
+ *
+ * The previous implementation used a single lazy regex
+ * (`<div ...>([\s\S]*?)<\/div>`), which stops at the FIRST `</div>` it
+ * encounters. Since lyrics containers almost always have nested divs inside
+ * them, that regex was matching only up to the first nested div's closing
+ * tag — silently truncating most songs after just a few words/lines. This
+ * walks the HTML and tracks div depth to find each container's true closing
+ * tag instead.
+ */
+const extractLyricsContainers = (html) => {
+  const openTagRegex = /<div[^>]*\bdata-lyrics-container="true"[^>]*>/gi;
+  const anyDivRegex = /<div\b[^>]*>|<\/div>/gi;
+  const chunks = [];
+
+  let openMatch;
+  while ((openMatch = openTagRegex.exec(html)) !== null) {
+    const containerStart = openMatch.index + openMatch[0].length;
+    anyDivRegex.lastIndex = containerStart;
+
+    let depth = 1;
+    let containerEnd = html.length;
+    let tagMatch;
+    while ((tagMatch = anyDivRegex.exec(html)) !== null) {
+      if (tagMatch[0].toLowerCase() === '</div>') {
+        depth--;
+        if (depth === 0) {
+          containerEnd = tagMatch.index;
+          break;
+        }
+      } else {
+        depth++;
+      }
+    }
+
+    chunks.push(html.slice(containerStart, containerEnd));
+    // Resume scanning for the next container right after this one ended.
+    openTagRegex.lastIndex = containerEnd;
+  }
+
+  return chunks;
+};
+
 const scrapeLyrics = async (geniusUrl) => {
   const res = await axios.get(geniusUrl, {
     timeout: 20000,
@@ -54,14 +100,10 @@ const scrapeLyrics = async (geniusUrl) => {
 
   const html = res.data || '';
 
-  // Genius stores each stanza in a <div data-lyrics-container="true"> element.
-  // Extract all such divs, strip HTML tags, convert <br> → newline.
-  const containerRegex = /<div[^>]+data-lyrics-container="true"[^>]*>([\s\S]*?)<\/div>/gi;
-  const chunks = [];
-  let match;
-  while ((match = containerRegex.exec(html)) !== null) {
-    chunks.push(match[1]);
-  }
+  // Genius stores each stanza in a <div data-lyrics-container="true"> element,
+  // which can itself contain nested divs (annotations) — extracted with
+  // depth-aware parsing above, not a naive lazy regex.
+  const chunks = extractLyricsContainers(html);
 
   if (!chunks.length) return null;
 
