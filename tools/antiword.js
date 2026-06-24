@@ -24,6 +24,9 @@ module.exports = {
           `🛡️ *Antiword Status*\n\n` +
           `Status: *${status}*\n` +
           `Action: *${action}*\n\n` +
+          `When ON, messages from non-admins containing a blocked word are auto-moderated - this also catches disguised spelling (e.g. "sh1t", "a$$"). Group admins and the bot owner are always exempt.\n` +
+          `  • *delete* - removes the message only\n` +
+          `  • *kick* - removes the message AND the sender, instantly, no warning\n\n` +
           `Usage:\n` +
           `  .antiword on\n` +
           `  .antiword off\n` +
