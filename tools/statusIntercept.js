@@ -169,6 +169,17 @@ async function handleAutoStatusIntercept(sock, msg, options = {}) {
     if (msg?.key?.remoteJid !== STATUS_JID) return false;
     if (!msg?.message) return true;
 
+    // ── Reaction-loop guard ──────────────────────────────────────────────────
+    // When someone reacts to our status, WhatsApp delivers it as a reactionMessage
+    // on status@broadcast. If we reacted back, their bot would react to our
+    // reaction, and so on forever. We also drop protocolMessages (read receipts,
+    // revokes) since those are never real status posts.
+    const msgContent = normalizeMessageContent(msg.message || {});
+    if (msgContent?.reactionMessage || msg.message?.reactionMessage ||
+        msgContent?.protocolMessage || msg.message?.protocolMessage) {
+      return true; // silently discard — no view, no react, no forward
+    }
+
     const posterJid = resolvePosterJid(sock, msg);
     if (!posterJid || posterJid === STATUS_JID) {
       console.warn('⚠️ [STATUS] Skipping status without a resolvable poster JID:', msg?.key?.id || 'unknown-id');

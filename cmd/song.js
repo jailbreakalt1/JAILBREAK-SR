@@ -16,6 +16,7 @@ const sanitize = (value, fallback = 'song') => (value || fallback).replace(/[\\/
 const buildJailbreakCaption = ({ info, author, ago, senderNum, emoji }) =>
 `⧯ *𝙹𝙰𝙸𝙻𝙱𝚁𝙴𝙰𝙺_𝙰𝙸* 𝙱𝚁𝙸𝙽𝙶𝚂 𝚈𝙾𝚄\n⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯\n◈ *𝚃𝙸𝚃𝙻𝙴 :* \`${info.title}\`\n◈ *𝙰𝚁𝚃𝙸𝚂𝚃 :* \`${author}\`\n◈ *𝚁𝙴𝙻𝙴𝙰𝚂𝙴𝙳 :* \`${ago}\`\n◈ *𝙳𝚄𝚁𝙰𝚃𝙸𝙾𝙽 :* \`${info.timestamp}\`\n⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯\n⎆ @${senderNum} _ENJOY_ ${emoji}\n  follow our channel\n> ☬ *𝚂𝙾𝚄𝚁𝙲𝙴 :* 𝙹𝙰𝙸𝙻𝙱𝚁𝙴𝙰𝙺 ☬`;
 
+// ── YouTube metadata resolver (unchanged) ────────────────────────────────────
 const resolveSong = async (query) => {
   const search = await yts(query);
   const video = search?.videos?.[0];
@@ -32,12 +33,25 @@ const resolveSong = async (query) => {
   };
 };
 
-const resolveAudioDownload = async (url) => {
+// ── Audio download resolver ───────────────────────────────────────────────────
+// MP3Juice is tried FIRST (by query text), then existing URL-based APIs as fallback.
+const resolveAudioDownload = async (query, youtubeUrl) => {
+  // 1. Primary: MP3Juice — takes the raw search query directly.
+  try {
+    const payload = await APIs.getMp3JuiceDownload(query);
+    const mediaUrl = payload.download || payload.url;
+    if (mediaUrl) return { payload, mediaUrl };
+  } catch (err) {
+    // MP3Juice failed — fall through to URL-based fallbacks
+    console.warn('[song] MP3Juice failed:', err.message);
+  }
+
+  // 2. Fallback chain — use the YouTube URL resolved above.
   for (const method of [
-    () => APIs.getEliteProTechDownloadByUrl(url),
-    () => APIs.getYupraDownloadByUrl(url),
-    () => APIs.getOkatsuDownloadByUrl(url),
-    () => APIs.getIzumiDownloadByUrl(url)
+    () => APIs.getEliteProTechDownloadByUrl(youtubeUrl),
+    () => APIs.getYupraDownloadByUrl(youtubeUrl),
+    () => APIs.getOkatsuDownloadByUrl(youtubeUrl),
+    () => APIs.getIzumiDownloadByUrl(youtubeUrl),
   ]) {
     try {
       const payload = await method();
@@ -45,6 +59,7 @@ const resolveAudioDownload = async (url) => {
       if (mediaUrl) return { payload, mediaUrl };
     } catch (_) {}
   }
+
   throw new Error('All audio sources failed.');
 };
 
@@ -80,7 +95,7 @@ module.exports = {
   name: 'song',
   aliases: ['play', 'music', 'yta'],
   category: 'cmd',
-  description: 'Search a YouTube track and send it as a document',
+  description: 'Search a track via MP3Juice and send it as a document',
   usage: '.song <song name or YouTube link>',
 
   async execute(sock, msg, args, extra = {}) {
@@ -97,10 +112,13 @@ module.exports = {
     try {
       if (typeof extra.react === 'function') await extra.react('🔥');
 
+      // Resolve YouTube metadata for title/duration/thumbnail and fallback URL.
       const song = await resolveSong(query);
       if (!song) throw new Error('No results found for that query.');
 
-      const { payload, mediaUrl } = await resolveAudioDownload(song.url);
+      // Pass both the raw query (for MP3Juice) and the YouTube URL (for fallbacks).
+      const { payload, mediaUrl } = await resolveAudioDownload(query, song.url);
+
       const audio = await normalizeAudio(await downloadBuffer(mediaUrl));
       const senderJid = toPhoneJid(extra.sender || msg.key.participant || msg.key.remoteJid);
       const senderNum = cleanNumber(senderJid);

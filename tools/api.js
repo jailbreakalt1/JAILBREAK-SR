@@ -3,8 +3,6 @@
  */
 
 const axios = require('axios');
-const config = require('../config');
-
 const api = axios.create({
   timeout: 30000,
   headers: {
@@ -23,40 +21,6 @@ const APIs = {
       return response.data;
     } catch (error) {
       throw new Error('Failed to generate image');
-    }
-  },
-  
-  // AI Chat - NVIDIA
-  chatAI: async (text) => {
-    try {
-      const persona = 'You are JB short for JAILBREAK, a state of the art AI built by Ryan. Your location is Kwekwe, Zimbabwe. Ryan is a tech enthusiastic genius. Only mention Ryan and location when asked. JB is human-like, funny, sarcastic, and existential. Use emojis sparingly but effectively. Keep responses concise unless asked for detail.';
-      const apiKey = config.apiKeys?.JAILBREAKAPI || process.env.JAILBREAKAPI;
-      if (!apiKey) throw new Error('JAILBREAKAPI is missing in environment/config.');
-
-      const response = await api.post('https://integrate.api.nvidia.com/v1/chat/completions', {
-        model: 'meta/llama-4-maverick-17b-128e-instruct',
-        messages: [
-          { role: 'system', content: persona },
-          { role: 'user', content: text }
-        ],
-        max_tokens: 512,
-        temperature: 1,
-        top_p: 1,
-        frequency_penalty: 0,
-        presence_penalty: 0,
-        stream: false
-      }, {
-        headers: {
-          Authorization: `Bearer ${apiKey}`,
-          Accept: 'application/json',
-          'Content-Type': 'application/json'
-        }
-      });
-
-      return { msg: response.data?.choices?.[0]?.message?.content || '' };
-    } catch (error) {
-      const reason = error.response?.data?.error?.message || error.message;
-      throw new Error(`Failed to get AI response: ${reason}`);
     }
   },
   
@@ -551,7 +515,169 @@ const APIs = {
     } catch (error) {
       throw new Error(`Failed to generate speech: ${error.message}`);
     }
-  }
+  },
+
+  /**
+   * MP3Juice (v5.mp3juice.za.com) — primary song download source.
+   *
+   * Flow:
+   *  1. POST the search query to get back the HTML results page.
+   *  2. Parse out the first result's YouTube video ID and title.
+   *  3. Hit /download.php?id=<videoId>&format=mp3 to get the CDN URL.
+   *  4. HEAD-check that CDN URL to follow all HTTP redirects and confirm the
+   *     final destination is actual audio (not an HTML ad-gate page).
+   *  5. Return the validated direct audio URL.
+   *
+   * Ad/redirect defence:
+   *  - maxRedirects: 10 on every request so HTTP 301/302 chains are followed
+   *    automatically and never mistaken for the file itself.
+   *  - After every redirect chain we inspect Content-Type. If it is text/html
+   *    the site dropped us on an interstitial/ad page — we throw immediately
+   *    so the outer fallback chain in song.js can try the next source.
+   *  - We never rely on request.res.responseUrl (Node http internals) — instead
+   *    we use axios's own response.request.res.responseUrl which is stable, but
+   *    we treat it only as a secondary hint after the Content-Type check.
+   */
+  getMp3JuiceDownload: async (query) => {
+    const BASE = 'https://v5.mp3juice.za.com';
+
+    // Headers that make us look like a real Chrome browser tab on the site.
+    const BROWSER_HEADERS = {
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+      'Accept-Language': 'en-US,en;q=0.9',
+      'Referer': BASE + '/',
+      'Origin': BASE,
+    };
+
+    // Retry wrapper — backs off 1.2s, 2.4s between attempts.
+    const tryRequest = async (getter, attempts = 3) => {
+      let lastError;
+      for (let attempt = 1; attempt <= attempts; attempt++) {
+        try { return await getter(); } catch (err) {
+          lastError = err;
+          if (attempt < attempts) await new Promise(r => setTimeout(r, 1200 * attempt));
+        }
+      }
+      throw lastError;
+    };
+
+    // Returns true if a Content-Type header value represents real audio/binary.
+    // Returns false if it's HTML (ad page, interstitial, error page).
+    const isAudioContentType = (ct = '') => {
+      ct = ct.toLowerCase();
+      if (ct.includes('text/html')) return false;
+      if (ct.includes('audio/') || ct.includes('application/octet-stream') ||
+          ct.includes('application/download') || ct.includes('video/') ||
+          ct.includes('binary/')) return true;
+      // Unknown / empty — allow through; the buffer sniffer in normalizeAudio will catch garbage.
+      return true;
+    };
+
+    // ── Step 1: Search ──────────────────────────────────────────────────────────
+    const searchRes = await tryRequest(() =>
+      axios.post(BASE + '/', new URLSearchParams({ search: query }).toString(), {
+        timeout: 30000,
+        maxRedirects: 10,
+        headers: {
+          ...BROWSER_HEADERS,
+          'Accept': 'text/html,application/xhtml+xml,*/*;q=0.8',
+          'Content-Type': 'application/x-www-form-urlencoded',
+        },
+      })
+    );
+
+    const html = (typeof searchRes.data === 'string') ? searchRes.data : '';
+
+    // ── Step 2: Parse video ID and title ────────────────────────────────────────
+    // Cards render as: <div ... data-id="dQw4w9WgXcQ" data-title="Never Gonna Give You Up">
+    const idMatch    = html.match(/data-id=["']([a-zA-Z0-9_-]{11})["']/);
+    const titleMatch = html.match(/data-title=["']([^"']{1,200})["']/);
+
+    if (!idMatch) throw new Error('MP3Juice: no results found for query');
+    const videoId  = idMatch[1];
+    const title    = titleMatch ? titleMatch[1].trim() : query;
+    const thumbnail = `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`;
+
+    // ── Step 3: Request conversion URL ─────────────────────────────────────────
+    // /download.php returns JSON { download: "<url>" } after a brief server-side
+    // YouTube→MP3 conversion. We disable axios auto-redirects here intentionally
+    // so we receive the JSON body, not end up chasing a redirect to an ad page.
+    const convertRes = await tryRequest(() =>
+      axios.get(`${BASE}/download.php`, {
+        params: { id: videoId, format: 'mp3' },
+        timeout: 90000,          // conversion can take up to ~60s for longer tracks
+        maxRedirects: 0,          // we want the JSON body, not to follow a redirect
+        validateStatus: s => s < 400,
+        headers: {
+          ...BROWSER_HEADERS,
+          'Accept': 'application/json, text/plain, */*',
+          'X-Requested-With': 'XMLHttpRequest',   // some variants gate on this
+        },
+      })
+    );
+
+    // ── Step 4: Extract the CDN URL from JSON ──────────────────────────────────
+    const data = convertRes.data;
+    let downloadUrl =
+      data?.download ||
+      data?.url      ||
+      data?.link     ||
+      data?.result?.download ||
+      data?.result?.url      ||
+      (typeof data === 'string' && /^https?:\/\//.test(data.trim()) ? data.trim() : null);
+
+    if (!downloadUrl) throw new Error('MP3Juice: conversion returned no download URL');
+
+    // ── Step 5: Validate the CDN URL — follow all redirects, detect ad pages ───
+    // We do a HEAD request (no body download) to follow the full redirect chain
+    // cheaply and confirm the terminal Content-Type is audio, not HTML.
+    // If HEAD is blocked (405), fall back to a GET with a small byte range.
+    let validatedUrl = downloadUrl;
+    try {
+      let headRes;
+      try {
+        headRes = await axios.head(downloadUrl, {
+          timeout: 20000,
+          maxRedirects: 10,
+          validateStatus: s => s < 400,
+          headers: {
+            ...BROWSER_HEADERS,
+            'Accept': 'audio/mpeg, audio/*, application/octet-stream, */*',
+          },
+        });
+      } catch (headErr) {
+        // HEAD blocked — try a 0-byte range GET instead
+        headRes = await axios.get(downloadUrl, {
+          timeout: 20000,
+          maxRedirects: 10,
+          validateStatus: s => s < 400,
+          headers: {
+            ...BROWSER_HEADERS,
+            'Range': 'bytes=0-0',
+            'Accept': 'audio/mpeg, audio/*, */*',
+          },
+        });
+      }
+
+      const ct = headRes.headers?.['content-type'] || '';
+      if (!isAudioContentType(ct)) {
+        throw new Error(`MP3Juice: CDN URL resolved to an HTML page (ad gate) — Content-Type: ${ct}`);
+      }
+
+      // Use the final URL after all redirects if axios tracked it.
+      const finalUrl = headRes.request?.res?.responseUrl || headRes.config?.url;
+      if (finalUrl && /^https?:\/\//.test(finalUrl) && finalUrl !== downloadUrl) {
+        validatedUrl = finalUrl;
+      }
+    } catch (validationErr) {
+      // Re-throw ad-gate errors so the fallback chain in song.js fires.
+      if (validationErr.message.includes('ad gate')) throw validationErr;
+      // For network errors (timeout, DNS) on validation only — trust the URL anyway;
+      // downloadBuffer in song.js will fail gracefully if it's truly broken.
+    }
+
+    return { download: validatedUrl, title, thumbnail };
+  },
 };
 
 module.exports = APIs;

@@ -38,6 +38,13 @@ const config = {
         globalLimit: 30,
         globalWindow: 60,
         maxWarnings: 3,
+    },
+
+    // Genius API credentials — get yours at https://genius.com/api-clients
+    genius: {
+        clientAccessToken: process.env.GENIUS_ACCESS_TOKEN || '',
+        clientId:          process.env.GENIUS_CLIENT_ID    || '',
+        clientSecret:      process.env.GENIUS_CLIENT_SECRET || '',
     }
 };
 
