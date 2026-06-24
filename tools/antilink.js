@@ -24,6 +24,9 @@ module.exports = {
           `🔗 *Antilink Status*\n\n` +
           `Status: *${status}*\n` +
           `Action: *${action}*\n\n` +
+          `When ON, any link (WhatsApp invite links, t.me, discord.gg, bit.ly, etc) posted by a non-admin is auto-moderated. Group admins and the bot owner are always exempt.\n` +
+          `  • *delete* - removes the message only\n` +
+          `  • *kick* - removes the message AND the sender, instantly, no warning\n\n` +
           `Usage:\n` +
           `  .antilink on\n` +
           `  .antilink off\n` +
