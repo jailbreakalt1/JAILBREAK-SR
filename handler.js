@@ -267,21 +267,43 @@ async function handleMessage(sock, msg) {
     if (isGroup && !isOwnerUser) {
       const gSettings = database.getGroupSettings(from);
       if (gSettings.antiword && badWordRegex.test(normalizeBody(body))) {
-        return extra.reply(`⫎@${sender.split('@')[0]} - COMMAND BLOCKED - BAD WORD DETECTED 🚫⧯`, { mentions: [sender] });
+        return extra.reply(
+          `⫎@${sender.split('@')[0]} - COMMAND BLOCKED 🚫⧯\n\n` +
+          `Your message contains a word this group doesn't allow in commands. ` +
+          `Remove it and resend your command - admins can adjust the word list with *.antiword*.`,
+          { mentions: [sender] }
+        );
       }
 
       if (gSettings.antispam) {
         const now = Date.now();
         const cmdKey = `${sender}:${commandName}:${args.join(' ')}`;
+        const windowMin = Math.round(config.spam.perUserWindow / 60);
 
         const warnData = spamTracker.warnings.get(sender);
         if (warnData && warnData.mutedUntil && now < warnData.mutedUntil) {
-          return extra.reply(`⫎@${sender.split('@')[0]} - YOU ARE MUTED FOR 5 MIN - WAIT ⏳⧯`, { mentions: [sender] });
+          const remainingSec = Math.ceil((warnData.mutedUntil - now) / 1000);
+          const remainingLabel = remainingSec >= 60
+            ? `${Math.ceil(remainingSec / 60)} min`
+            : `${remainingSec}s`;
+          return extra.reply(
+            `⫎@${sender.split('@')[0]} - YOU ARE MUTED ⏳⧯\n\n` +
+            `You went over the command limit too many times, so I'm ignoring your commands for ${remainingLabel} more. ` +
+            `No need to keep sending commands - they just won't run until the mute ends.`,
+            { mentions: [sender] }
+          );
         }
 
         const lastTime = spamTracker.duplicates.get(cmdKey);
         if (lastTime && (now - lastTime) < config.spam.duplicateCooldown * 1000) {
-          return extra.reply(`⫎@${sender.split('@')[0]} - SLOOWWWW DOWN, I CAN'T KEEP UP. GIVE ME LIKE 2MINS THEN TRY AGAIN... 💀⧯`, { mentions: [sender] });
+          const secondsLeft = Math.ceil((config.spam.duplicateCooldown * 1000 - (now - lastTime)) / 1000);
+          return extra.reply(
+            `⫎@${sender.split('@')[0]} - SLOOWWWW DOWN 💀⧯\n\n` +
+            `You just sent *.${commandName}* with the exact same details. ` +
+            `To stop accidental double-sends, I block an identical command for ${config.spam.duplicateCooldown}s. ` +
+            `Wait about ${secondsLeft}s, then try again.`,
+            { mentions: [sender] }
+          );
         }
 
         const userTimes = spamTracker.userHistory.get(sender) || [];
@@ -292,10 +314,20 @@ async function handleMessage(sock, msg) {
           if (warnings.count >= config.spam.maxWarnings) {
             warnings.mutedUntil = now + 5 * 60 * 1000;
             spamTracker.warnings.set(sender, warnings);
-            return extra.reply(`⫎🚫 @${sender.split('@')[0]} - SPAM/ABUSE DETECTED - ${warnings.count}/${config.spam.maxWarnings} STRIKES\nMUTED FOR 5 MINUTES ⏳\n I WILL PERSONALLY IGNORE YOU FOR THE NEXT 5 MINS⧯`, { mentions: [sender] });
+            return extra.reply(
+              `⫎🚫 @${sender.split('@')[0]} - MUTED (${warnings.count}/${config.spam.maxWarnings} STRIKES) ⏳⧯\n\n` +
+              `You kept going over the ${config.spam.perUserLimit}-commands-per-${windowMin}min limit even after ${config.spam.maxWarnings - 1} warning(s). ` +
+              `I'll ignore your commands for 5 minutes - this protects the group from flooding, it's nothing personal.`,
+              { mentions: [sender] }
+            );
           }
           spamTracker.warnings.set(sender, warnings);
-          return extra.reply(`⫎🐢 @${sender.split('@')[0]} - SLOW DOWN! WARNING ${warnings.count}/${config.spam.maxWarnings}\nMAX 5 REQUESTS PER 2MIN - NEXT STRIKE = MUTE ⏳⧯`, { mentions: [sender] });
+          return extra.reply(
+            `⫎🐢 @${sender.split('@')[0]} - SLOW DOWN! WARNING ${warnings.count}/${config.spam.maxWarnings} ⏳⧯\n\n` +
+            `This group allows max ${config.spam.perUserLimit} commands per ${windowMin} min, and you just went over that. ` +
+            `Hit ${config.spam.maxWarnings} warnings and you'll be muted for 5 minutes. Just space your commands out a bit.`,
+            { mentions: [sender] }
+          );
         }
 
         spamTracker.duplicates.set(cmdKey, now);
@@ -325,7 +357,14 @@ async function handleAntilink(sock, msg, groupMetadata) {
     // Never moderate the bot's own account. This account IS the owner, so
     // a link the owner posts from their own phone must never get deleted
     // or - worse - get the owner kicked from their own group by their own bot.
-    if (msg.key?.fromMe) { console.log('[ANTILINK] fromMe - skipped'); return; }
+    // We check BOTH fromMe (the bot's own connected device) and isOwner()
+    // (the owner's number, possibly messaging from a *different* linked
+    // device where fromMe is false) - either one is enough to exempt them.
+    const linkSender = msg.key.participant || msg.key.remoteJid;
+    if (msg.key?.fromMe || isOwner(linkSender, msg.pushName)) {
+      console.log('[ANTILINK] owner/fromMe - skipped');
+      return;
+    }
 
     const settings = database.getGroupSettings(from);
     if (!settings.antilink) { console.log('[ANTILINK] disabled for group'); return; }
@@ -341,7 +380,7 @@ async function handleAntilink(sock, msg, groupMetadata) {
     const linkRegex = /(https?:\/\/)?(www\.)?(([a-z0-9-]+\.)?(chat\.whatsapp\.com|wa\.me|t\.me|telegram\.me|discord\.gg|invite\.discord|bit\.ly|tinyurl\.com|shorturl\.at|rb\.gy|rebrand\.ly|cutt\.ly|ow\.ly|is\.gd|onrender\.com|vercel\.app|herokuapp\.com|netlify\.app)|([a-z0-9-]+\.)+(xyz|tk|ml|cf|ga|gq))(\/\S+)?/gi;
     if (!linkRegex.test(body)) { console.log('[ANTILINK] no link match. body=' + body.slice(0, 60)); return; }
 
-    const sender = msg.key.participant || msg.key.remoteJid;
+    const sender = linkSender;
     let isGroupAdmin = false;
     for (const p of (groupMetadata.participants || [])) {
       if (p.admin !== 'admin' && p.admin !== 'superadmin') continue;
@@ -354,9 +393,21 @@ async function handleAntilink(sock, msg, groupMetadata) {
 
     if (action === 'delete') {
       await sock.sendMessage(from, { delete: msg.key });
+      await sock.sendMessage(from, {
+        text: `⫎@${sender.split('@')[0]} - LINK REMOVED 🔗🚫⧯\n\n` +
+          `This group has *antilink* enabled, which auto-deletes messages containing links (invite links, shortened URLs, etc) from non-admins. ` +
+          `Group admins are exempt. Ask an admin to turn it off with *.antilink off* if you need to share a link.`,
+        mentions: [sender]
+      });
       console.log('[ANTILINK] delete sent');
     } else if (action === 'kick') {
       await sock.groupParticipantsUpdate(from, [sender], 'remove');
+      await sock.sendMessage(from, {
+        text: `⫎@${sender.split('@')[0]} - REMOVED FOR POSTING A LINK 🔗🚫⧯\n\n` +
+          `This group has *antilink* set to kick: posting a link as a non-admin gets you removed automatically, no warning. ` +
+          `Admins can change this to a gentler "delete only" mode with *.antilink delete*.`,
+        mentions: [sender]
+      });
       console.log('[ANTILINK] kick sent');
     }
   } catch (err) {
@@ -370,7 +421,10 @@ async function handleAntiword(sock, msg, groupMetadata) {
     if (!from || !from.endsWith('@g.us')) return;
 
     // Never moderate the bot's own account - see handleAntilink for why.
-    if (msg.key?.fromMe) return;
+    // Checks fromMe AND isOwner() so the owner is protected even when
+    // messaging from a second linked device (fromMe false in that case).
+    const wordSender = msg.key.participant || msg.key.remoteJid;
+    if (msg.key?.fromMe || isOwner(wordSender, msg.pushName)) return;
 
     const settings = database.getGroupSettings(from);
     if (!settings.antiword) return;
@@ -386,7 +440,7 @@ async function handleAntiword(sock, msg, groupMetadata) {
     const normalized = normalizeBody(body);
     if (!badWordRegex.test(normalized)) return;
 
-    const sender = msg.key.participant || msg.key.remoteJid;
+    const sender = wordSender;
     let isGroupAdmin = false;
     for (const p of (groupMetadata.participants || [])) {
       if (p.admin !== 'admin' && p.admin !== 'superadmin') continue;
@@ -398,8 +452,20 @@ async function handleAntiword(sock, msg, groupMetadata) {
 
     if (action === 'delete') {
       await sock.sendMessage(from, { delete: msg.key });
+      await sock.sendMessage(from, {
+        text: `⫎@${sender.split('@')[0]} - MESSAGE REMOVED 🤬🚫⧯\n\n` +
+          `This group has *antiword* enabled, which auto-deletes messages containing words on the blocked list, even disguised with numbers/symbols (e.g. "sh1t"). ` +
+          `Group admins are exempt. If this was a false positive, ask an admin - they manage the word list with *.antiword*.`,
+        mentions: [sender]
+      });
     } else if (action === 'kick') {
       await sock.groupParticipantsUpdate(from, [sender], 'remove');
+      await sock.sendMessage(from, {
+        text: `⫎@${sender.split('@')[0]} - REMOVED FOR A BLOCKED WORD 🤬🚫⧯\n\n` +
+          `This group has *antiword* set to kick: using a word on the blocked list as a non-admin gets you removed automatically, no warning. ` +
+          `Admins can change this to a gentler "delete only" mode with *.antiword delete*.`,
+        mentions: [sender]
+      });
     }
   } catch (err) {
     console.error('[HANDLER] handleAntiword error:', err.message);
