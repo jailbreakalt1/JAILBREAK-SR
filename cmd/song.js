@@ -34,19 +34,8 @@ const resolveSong = async (query) => {
 };
 
 // ── Audio download resolver ───────────────────────────────────────────────────
-// MP3Juice is tried FIRST (by query text), then existing URL-based APIs as fallback.
-const resolveAudioDownload = async (query, youtubeUrl) => {
-  // 1. Primary: MP3Juice — takes the raw search query directly.
-  try {
-    const payload = await APIs.getMp3JuiceDownload(query);
-    const mediaUrl = payload.download || payload.url;
-    if (mediaUrl) return { payload, mediaUrl };
-  } catch (err) {
-    // MP3Juice failed — fall through to URL-based fallbacks
-    console.warn('[song] MP3Juice failed:', err.message);
-  }
-
-  // 2. Fallback chain — use the YouTube URL resolved above.
+// Tries each URL-based API in turn against the resolved YouTube URL.
+const resolveAudioDownload = async (youtubeUrl) => {
   for (const method of [
     () => APIs.getEliteProTechDownloadByUrl(youtubeUrl),
     () => APIs.getYupraDownloadByUrl(youtubeUrl),
@@ -95,7 +84,7 @@ module.exports = {
   name: 'song',
   aliases: ['play', 'music', 'yta'],
   category: 'cmd',
-  description: 'Search a track via MP3Juice and send it as a document',
+  description: 'Search and download a track as a document',
   usage: '.song <song name or YouTube link>',
 
   async execute(sock, msg, args, extra = {}) {
@@ -116,8 +105,8 @@ module.exports = {
       const song = await resolveSong(query);
       if (!song) throw new Error('No results found for that query.');
 
-      // Pass both the raw query (for MP3Juice) and the YouTube URL (for fallbacks).
-      const { payload, mediaUrl } = await resolveAudioDownload(query, song.url);
+      // Use the YouTube URL resolved above to find a working audio source.
+      const { payload, mediaUrl } = await resolveAudioDownload(song.url);
 
       const audio = await normalizeAudio(await downloadBuffer(mediaUrl));
       const senderJid = toPhoneJid(extra.sender || msg.key.participant || msg.key.remoteJid);
