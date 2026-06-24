@@ -88,6 +88,47 @@ const extractLyricsContainers = (html) => {
   return chunks;
 };
 
+/**
+ * Decode HTML entities, including numeric/hex forms (e.g. &#x27; &#39;)
+ * that Genius uses for apostrophes and other punctuation in lyrics.
+ */
+const decodeHtmlEntities = (text) => text
+  .replace(/&lt;/g, '<')
+  .replace(/&gt;/g, '>')
+  .replace(/&quot;/g, '"')
+  .replace(/&#39;/g, "'")
+  .replace(/&#x27;/gi, "'")
+  .replace(/&apos;/g, "'")
+  .replace(/&nbsp;/g, ' ')
+  .replace(/&#x([0-9a-f]+);/gi, (_, hex) => String.fromCodePoint(parseInt(hex, 16)))
+  .replace(/&#(\d+);/g, (_, dec) => String.fromCodePoint(parseInt(dec, 10)))
+  // &amp; must be decoded last, otherwise "&amp;#39;" would double-decode.
+  .replace(/&amp;/g, '&');
+
+/**
+ * Genius's first lyrics container is often prefixed with page chrome that
+ * has nothing to do with the song itself — contributor count, a list of
+ * translation links, and a collapsed song-description teaser ending in
+ * "Read More". Since all tags get stripped, that chrome collapses into a
+ * single run-on line glued to the start of the actual lyrics
+ * (e.g. "271 ContributorsTranslations...Read More [Verse 1] ...").
+ *
+ * Real lyrics for the vast majority of songs start with a bracketed
+ * section tag like [Verse 1] or [Chorus]. If such a tag exists and the
+ * text before it contains the telltale Genius chrome keywords, it's safe
+ * to drop everything before that tag. If no such keywords are present,
+ * we leave the text untouched — it might be a song whose lyrics
+ * legitimately start with bracketed text.
+ */
+const stripGeniusPageChrome = (text) => {
+  const sectionTagMatch = text.match(/\[(?:Verse|Chorus|Pre-Chorus|Post-Chorus|Bridge|Outro|Intro|Hook|Refrain|Interlude|Drop|Breakdown)[^\]]*\]/i);
+  if (!sectionTagMatch) return text;
+
+  const prefix = text.slice(0, sectionTagMatch.index);
+  const looksLikeChrome = /contributors?|translations?|read more/i.test(prefix);
+  return looksLikeChrome ? text.slice(sectionTagMatch.index) : text;
+};
+
 const scrapeLyrics = async (geniusUrl) => {
   const res = await axios.get(geniusUrl, {
     timeout: 20000,
@@ -107,19 +148,17 @@ const scrapeLyrics = async (geniusUrl) => {
 
   if (!chunks.length) return null;
 
-  const lyrics = chunks
+  let lyrics = chunks
     .join('\n')
     // <br> and <br/> → newline
     .replace(/<br\s*\/?>/gi, '\n')
     // Section headers like [Chorus], [Verse 1] — keep them, just strip the tags around them
-    .replace(/<[^>]+>/g, '')
-    // Decode common HTML entities
-    .replace(/&amp;/g, '&')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
-    .replace(/&nbsp;/g, ' ')
+    .replace(/<[^>]+>/g, '');
+
+  lyrics = decodeHtmlEntities(lyrics);
+  lyrics = stripGeniusPageChrome(lyrics);
+
+  lyrics = lyrics
     // Collapse 3+ consecutive newlines into 2
     .replace(/\n{3,}/g, '\n\n')
     .trim();
