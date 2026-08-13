@@ -1,8 +1,13 @@
 const ACRCloud = require('acrcloud');
 const yts = require('yt-search');
 const { downloadMediaMessage } = require('@whiskeysockets/baileys');
+const { sendInteractiveMessage } = require('@ryuu-reinzz/button-helper');
+const songCommand = require('./song');
+const quota = require('../tools/quota');
+const { buildCard, buildStatusCard } = require('../tools/style');
+const downloadQueue = require('../tools/downloadQueue');
 
-const SONG_REQUEST_CHANNEL_LINK = 'https://whatsapp.com/channel/0029VagJIAr3bbVzV70jSU1p';
+const SONG_REQUEST_CHANNEL_LINK = 'https://whatsapp.com/channel/0029Vb6zZKpKbYMFqRWgx62q';
 const FALLBACK_THUMBNAIL = 'https://files.catbox.moe/s80m7e.png';
 const MAX_BUFFER_SIZE = 8 * 1024 * 1024; // 8MB
 
@@ -56,20 +61,38 @@ module.exports = {
 
     if (!targetMessage) {
       await sock.sendMessage(from, {
-        text: '🎵 Reply to an audio/video with .find, .shazam, or .id.'
+        text: buildStatusCard({
+          title: 'SONG ID',
+          status: '⫎ Reply to an audio/video first.',
+          lines: ['Use `.find`, `.shazam`, or `.id`.'],
+        })
       }, { quoted: msg });
+      return;
+    }
+
+    const sender = msg.key.participant || from;
+    const senderNum = (sender || '').split('@')[0];
+    const q = quota.getQuota(sender);
+    if (!q.allowed) {
+      const limitMsg = quota.buildLimitMessage({
+        jid: sender,
+        pushName: extra.pushName || '',
+        senderNum,
+        subject: 'songs',
+      });
+      await sock.sendMessage(from, { text: limitMsg.text }, { quoted: msg });
       return;
     }
 
     try {
       if (typeof extra.react === 'function') await extra.react('🔎');
 
-      const mediaBuffer = await downloadMediaMessage(
+      const mediaBuffer = await downloadQueue.run(() => downloadMediaMessage(
         targetMessage,
         'buffer',
         {},
         { logger: undefined, reuploadRequest: sock.updateMediaMessage }
-      );
+      ));
 
       if (!mediaBuffer?.length) {
         throw new Error('Unable to download media.');
@@ -78,7 +101,11 @@ module.exports = {
       const song = await identifySong(mediaBuffer);
       if (!song) {
         await sock.sendMessage(from, {
-          text: '⫎ Failed to identify. Try a clearer part of the audio.'
+          text: buildStatusCard({
+            title: 'SONG ID',
+            status: '❌ Failed to identify.',
+            lines: ['Try a clearer part of the audio.'],
+          })
         }, { quoted: msg });
         if (typeof extra.react === 'function') await extra.react('❌');
         return;
@@ -90,36 +117,89 @@ module.exports = {
       const genres = song.genres?.map((g) => g.name).join(', ') || 'General';
       const query = `${title} ${artists}`.trim();
 
-      let ytLink = 'Not available';
+      if (extra.downloadIdentifiedSong) {
+        if (typeof songCommand.sendSong !== 'function') {
+          throw new Error('Song downloader is unavailable.');
+        }
+        const sent = await songCommand.sendSong(sock, msg, query, { ...extra, skipQuota: true, quietFailure: true });
+        if (sent) {
+          quota.useQuota(sender);
+          if (typeof extra.react === 'function') await extra.react('✅');
+          return;
+        }
+      }
+
       let thumbnail = FALLBACK_THUMBNAIL;
       try {
         const yt = await yts(query);
-        ytLink = yt?.videos?.[0]?.url || ytLink;
         thumbnail = yt?.videos?.[0]?.thumbnail || thumbnail;
       } catch (_) {}
 
       const responseText =
-`╼ 𝚂𝙾𝙽𝙶 𝙸𝙳𝙴𝙽𝚃𝙸𝙵𝙸𝙴𝙳 ╾
-⎛
-  ◈ 𝚂𝙾𝙽𝙶 : \`${title}\`
-  ◈ 𝙰𝚁𝚃𝙸𝚂𝚃 : \`${artists}\`
-  ◈ 𝙰𝙻𝙱𝚄𝙼 : \`${album}\`
-  ◈ 𝙶𝙴𝙽𝚁𝙴 : \`${genres}\`
-⎝
+      buildCard({
+        title: 'SONG IDENTIFIED',
+        lines: [
+          `◈ *SONG :* \`${title}\``,
+          `◈ *ARTIST :* \`${artists}\``,
+          `◈ *ALBUM :* \`${album}\``,
+          `◈ *GENRE :* \`${genres}\``,
+        ],
+      });
 
-⧯ *YouTube Link:* ${ytLink}
+      try {
+        await sendInteractiveMessage(sock, from, {
+          text: responseText,
+          contextInfo: {
+            externalAdReply: {
+              title: `${artists} - ${title}`,
+              body: 'JAILBREAK_SR BRINGS YOU',
+              thumbnailUrl: thumbnail,
+              mediaType: 1,
+              renderLargerThumbnail: true,
+            },
+          },
+          interactiveButtons: [
+            {
+              name: 'quick_reply',
+              buttonParamsJson: JSON.stringify({
+                display_text: '⬇ DOWNLOAD SONG',
+                id: `finddl:${encodeURIComponent(query)}`,
+              }),
+            },
+            {
+              name: 'quick_reply',
+              buttonParamsJson: JSON.stringify({
+                display_text: '🎬 FETCH VIDEO',
+                id: `viddl:${encodeURIComponent(query)}`,
+              }),
+            },
+            {
+              name: 'cta_url',
+              buttonParamsJson: JSON.stringify({
+                display_text: '▶ JOIN CHANNEL',
+                url: SONG_REQUEST_CHANNEL_LINK,
+              }),
+            },
+          ],
+        }, { quoted: msg });
+      } catch (error) {
+        console.warn('[FIND] interactive send failed, falling back to plain text:', error?.message || error);
+        await sock.sendMessage(from, {
+          text: `${responseText}\nDownload: \`.song ${query}\``
+        }, { quoted: msg });
+      }
 
- ☬ *JAILBREAK HUB* ☬`;
-
-      await sock.sendMessage(from, {
-        text: `${responseText}\n\n*Copy:* \`${artists} - ${title}\``
-      }, { quoted: msg });
+      quota.useQuota(sender);
 
       if (typeof extra.react === 'function') await extra.react('✅');
     } catch (error) {
       console.error('[FIND] command error:', error?.message || error);
       await sock.sendMessage(from, {
-        text: '⚠️ System error during identification.'
+        text: buildStatusCard({
+          title: 'SONG ID',
+          status: '⚠️ System error during identification.',
+          lines: [error?.message || 'Unknown error'],
+        })
       }, { quoted: msg });
       if (typeof extra.react === 'function') await extra.react('❌');
     }

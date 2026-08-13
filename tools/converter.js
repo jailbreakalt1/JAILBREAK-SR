@@ -11,38 +11,61 @@
  */
 const fs = require('fs')
 const path = require('path')
+const crypto = require('crypto')
 const { spawn } = require('child_process')
+// Use the SAME temp directory cleanup.js sweeps, instead of a separate
+// hardcoded '../temp'. Previously these could be two different folders,
+// meaning cleanup.js's periodic sweep never touched ffmpeg's leftovers.
+const { getTempDir } = require('./tempManager')
 
 function ffmpeg(buffer, args = [], ext = '', ext2 = '') {
   return new Promise(async (resolve, reject) => {
-    try {
-      const tempDir = path.join(__dirname, '../temp')
-      if (!fs.existsSync(tempDir)) {
-        fs.mkdirSync(tempDir, { recursive: true })
-      }
-      let tmp = path.join(tempDir, Date.now() + '.' + ext)
-      let out = tmp + '.' + ext2
-      await fs.promises.writeFile(tmp, buffer)
-      spawn('ffmpeg', [
-        '-y',
-        '-i', tmp,
-        ...args,
-        out
-      ])
-        .on('error', reject)
-        .on('close', async (code) => {
-          try {
-            await fs.promises.unlink(tmp)
-            if (code !== 0) return reject(code)
-            resolve(await fs.promises.readFile(out))
-            await fs.promises.unlink(out)
-          } catch (e) {
-            reject(e)
-          }
-        })
-    } catch (e) {
-      reject(e)
+    const tempDir = getTempDir()
+    if (!fs.existsSync(tempDir)) {
+      fs.mkdirSync(tempDir, { recursive: true })
     }
+
+    // Random suffix avoids collisions if two conversions land in the same
+    // millisecond (Date.now() alone isn't unique under concurrent callers —
+    // toPTT/toVideo/toSquarePadded aren't behind downloadQueue).
+    const unique = `${Date.now()}-${crypto.randomBytes(4).toString('hex')}`
+    const tmp = path.join(tempDir, `${unique}.${ext}`)
+    const out = `${tmp}.${ext2}`
+
+    // Unconditional cleanup — runs whether we succeed, ffmpeg errors out,
+    // or ffmpeg exits non-zero. Nothing gets orphaned on disk anymore.
+    const cleanup = async () => {
+      await fs.promises.unlink(tmp).catch(() => {})
+      await fs.promises.unlink(out).catch(() => {})
+    }
+
+    let proc
+    try {
+      await fs.promises.writeFile(tmp, buffer)
+      proc = spawn('ffmpeg', ['-y', '-i', tmp, ...args, out])
+    } catch (e) {
+      await cleanup()
+      return reject(e)
+    }
+
+    proc.on('error', async (err) => {
+      await cleanup()
+      reject(err)
+    })
+
+    proc.on('close', async (code) => {
+      try {
+        if (code !== 0) {
+          reject(new Error(`ffmpeg exited with code ${code}`))
+          return
+        }
+        resolve(await fs.promises.readFile(out))
+      } catch (e) {
+        reject(e)
+      } finally {
+        await cleanup()
+      }
+    })
   })
 }
 
@@ -59,6 +82,44 @@ function toAudio(buffer, ext) {
     '-ar', '44100',
     '-f', 'mp3'
   ], ext, 'mp3')
+}
+
+/**
+ * Convert audio file to MP3 in-place using direct ffmpeg file I/O.
+ * Never loads the full audio into a JS Buffer — peak RAM stays at
+ * streaming chunk size regardless of file length.
+ *
+ * @param {string} inputPath  Path to source audio file
+ * @param {string} outputPath Path for converted MP3 output
+ * @returns {Promise<void>}
+ */
+function toAudioFile(inputPath, outputPath) {
+  return new Promise((resolve, reject) => {
+    const proc = spawn('ffmpeg', [
+      '-y',
+      '-i', inputPath,
+      '-vn',
+      '-ac', '2',
+      '-b:a', '128k',
+      '-ar', '44100',
+      '-f', 'mp3',
+      outputPath
+    ], {
+      stdio: ['ignore', 'ignore', 'pipe']
+    });
+
+    let stderr = '';
+    proc.stderr.on('data', (chunk) => { stderr += chunk.toString(); });
+
+    proc.on('error', reject);
+
+    proc.on('close', (code) => {
+      if (code !== 0) {
+        return reject(new Error(`ffmpeg exited with code ${code}: ${stderr.slice(-200)}`));
+      }
+      resolve();
+    });
+  });
 }
 
 /**
@@ -127,6 +188,7 @@ function toSquarePadded(buffer, ext, opts = {}) {
 
 module.exports = {
   toAudio,
+  toAudioFile,
   toPTT,
   toVideo,
   toSquarePadded,

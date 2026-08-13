@@ -1,5 +1,6 @@
 const axios = require('axios');
 const config = require('../config');
+const { buildCard, buildStatusCard } = require('../tools/style');
 
 // ── Genius API helpers ────────────────────────────────────────────────────────
 
@@ -215,7 +216,7 @@ const buildHeader = ({ title, artist, query }) =>
 
 module.exports = {
   name: 'lyrics',
-  aliases: ['lyric', 'lyr', 'words'],
+  aliases: ['lyric', 'lyr', 'words', 'lrics'],
   category: 'cmd',
   description: 'Fetch song lyrics from Genius',
   usage: '.lyrics <song name> [- artist]',
@@ -226,7 +227,11 @@ module.exports = {
 
     if (!query) {
       await sock.sendMessage(from, {
-        text: `⧯ Provide a song name.\n\nExample: *${config.prefix}lyrics Chamunorwa Bagga*`
+        text: buildStatusCard({
+          title: 'LYRICS',
+          status: '⫎ Provide a song name.',
+          lines: [`Example: *${config.prefix}lyrics Chamunorwa Bagga*`],
+        })
       }, { quoted: msg });
       return;
     }
@@ -238,7 +243,11 @@ module.exports = {
       const song = await searchGenius(query);
       if (!song) {
         await sock.sendMessage(from, {
-          text: `❌ No results found on Genius for: _${query}_`
+          text: buildStatusCard({
+            title: 'LYRICS',
+            status: '❌ No results found on Genius.',
+            lines: [`Query: _${query}_`],
+          })
         }, { quoted: msg });
         if (typeof extra.react === 'function') await extra.react('❌');
         return;
@@ -248,25 +257,39 @@ module.exports = {
       const rawLyrics = await scrapeLyrics(song.url);
       if (!rawLyrics) {
         await sock.sendMessage(from, {
-          text: `⚠️ Found *${song.title}* by *${song.artist}* but could not extract lyrics.\n\n🔗 Read on Genius: ${song.url}`
+          text: buildStatusCard({
+            title: 'LYRICS',
+            status: `⚠️ Found *${song.title}* by *${song.artist}* but could not extract lyrics.`,
+            lines: [`🔗 Read on Genius: ${song.url}`],
+          })
         }, { quoted: msg });
         if (typeof extra.react === 'function') await extra.react('⚠️');
         return;
       }
 
       // ── Step 3: Send — split if lyrics exceed WhatsApp limit ──
-      const header = buildHeader({ title: song.title, artist: song.artist, query });
       const chunks = splitLyrics(rawLyrics);
 
       // First message: header + first chunk
       await sock.sendMessage(from, {
-        text: `${header}\n\n${chunks[0]}\n\n> ☬ *𝚂𝙾𝚄𝚁𝙲𝙴 :* 𝙶𝙴𝙽𝙸𝚄𝚂 ☬`
+        text: buildCard({
+          title: 'LYRICS',
+          lines: [
+            `◈ *TITLE :* \`${song.title}\``,
+            `◈ *ARTIST :* \`${song.artist}\``,
+            '',
+            chunks[0],
+          ],
+        })
       }, { quoted: msg });
 
       // Subsequent chunks (if any) sent as follow-ups
       for (let i = 1; i < chunks.length; i++) {
         await sock.sendMessage(from, {
-          text: chunks[i] + (i === chunks.length - 1 ? '\n\n> ☬ *𝚂𝙾𝚄𝚁𝙲𝙴 :* 𝙶𝙴𝙽𝙸𝚄𝚂 ☬' : '')
+          text: buildCard({
+            title: 'LYRICS',
+            lines: [chunks[i]],
+          })
         }, { quoted: msg });
       }
 
@@ -276,8 +299,16 @@ module.exports = {
       console.error('[LYRICS] Error:', error.message || error);
 
       const userMsg = error.message?.includes('access token')
-        ? `🔑 Genius API not configured.\n\n${error.message}`
-        : `❌ Failed to fetch lyrics: ${error.message}`;
+        ? buildStatusCard({
+          title: 'LYRICS',
+          status: '🔑 Genius API not configured.',
+          lines: [error.message],
+        })
+        : buildStatusCard({
+          title: 'LYRICS',
+          status: '❌ Failed to fetch lyrics.',
+          lines: [error.message],
+        });
 
       await sock.sendMessage(from, { text: userMsg }, { quoted: msg });
       if (typeof extra.react === 'function') await extra.react('❌');

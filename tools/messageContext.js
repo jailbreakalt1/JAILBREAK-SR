@@ -20,6 +20,34 @@ const STYLE_BYPASS_PREFIXES = [
   '⧯ *𝙹𝙰𝙸𝙻𝙱𝚁𝙴𝙰𝙺_𝙰𝙸* 𝙱𝚁𝙸𝙽𝙶𝚂 𝚈𝙾𝚄'
 ];
 
+const MENTION_PATTERN = /@(\d{5,15})\b/g;
+
+const extractMentions = (value) => {
+  if (typeof value !== 'string' || !value) return [];
+  const matches = [];
+  const pattern = new RegExp(MENTION_PATTERN.source, 'g');
+  let match;
+  while ((match = pattern.exec(value)) !== null) {
+    matches.push(`${match[1]}@s.whatsapp.net`);
+  }
+  return matches;
+};
+
+const mergeMentions = (...groups) => {
+  const seen = new Set();
+  const merged = [];
+  for (const group of groups) {
+    if (!Array.isArray(group)) continue;
+    for (const jid of group) {
+      if (typeof jid !== 'string' || !jid) continue;
+      if (seen.has(jid)) continue;
+      seen.add(jid);
+      merged.push(jid);
+    }
+  }
+  return merged;
+};
+
 const decorateText = (value) => {
   if (typeof value !== 'string') return value;
   const trimmed = value.trim();
@@ -77,6 +105,21 @@ const attachUniversalContext = (content = {}) => {
       ...UNIVERSAL_MESSAGE_CONTEXT
     }
   };
+
+  const inferredMentions = mergeMentions(
+    content.mentions,
+    content.contextInfo?.mentionedJid,
+    extractMentions(content.text),
+    extractMentions(content.caption)
+  );
+
+  if (inferredMentions.length) {
+    nextContent.mentions = inferredMentions;
+    nextContent.contextInfo.mentionedJid = mergeMentions(
+      nextContent.contextInfo.mentionedJid,
+      inferredMentions
+    );
+  }
 
   if (typeof nextContent.text === 'string') {
     nextContent.text = decorateText(nextContent.text);

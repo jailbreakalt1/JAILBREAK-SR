@@ -5,6 +5,12 @@ const database = require('./database');
 const chalk = require('chalk');
 const { normalizeMessageContent } = require('@whiskeysockets/baileys');
 const { cleanNumber, resolvePhoneJid, getOwnPhoneJid } = require('./tools/jidCleanser');
+const songRecommend = require('./tools/songRecommend');
+const quota = require('./tools/quota');
+const songCommand = require('./cmd/song');
+const videoCommand = require('./cmd/video');
+const { buildStatusCard } = require('./tools/style');
+const { getMode } = require('./tools/modeManager');
 
 const badWords = [
   'fuck', 'fck', 'fuk', 'fvck', 'shit', 'sh1t', 'ass', 'azz', 'arse',
@@ -160,6 +166,125 @@ async function isBotAdmin(sock, jid) {
   }
 }
 
+function collectContextInfos(message, out = []) {
+  if (!message || typeof message !== 'object') return out;
+  for (const value of Object.values(message)) {
+    if (!value || typeof value !== 'object') continue;
+    if (value.contextInfo) out.push(value.contextInfo);
+    if (value.message) collectContextInfos(value.message, out);
+  }
+  return out;
+}
+
+function botWasMentioned(sock, msg, body = '') {
+  const botJid = getOwnPhoneJid(sock);
+  const botNumber = cleanNumber(botJid);
+  if (!botNumber) return false;
+
+  const contexts = collectContextInfos(msg.message);
+  const mentioned = contexts.some((ctx) =>
+    Array.isArray(ctx.mentionedJid) &&
+    ctx.mentionedJid.some((jid) => cleanNumber(jid) === botNumber)
+  );
+
+  return mentioned || body.includes(`@${botNumber}`);
+}
+
+function hasVideoFindTarget(normalizedMsg) {
+  if (normalizedMsg?.videoMessage) return true;
+
+  const contexts = collectContextInfos(normalizedMsg);
+  return contexts.some((ctx) => Boolean(ctx?.quotedMessage?.videoMessage));
+}
+
+function stripBotMention(sock, body) {
+  const botNumber = cleanNumber(getOwnPhoneJid(sock));
+  if (!botNumber) return body.trim();
+  return body
+    .replace(new RegExp(`@${botNumber}\\b`, 'g'), ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+async function handleFindDownloadTap(sock, msg, from, sender, senderNum, tapId) {
+  const query = decodeURIComponent(tapId.slice('finddl:'.length)).trim();
+  if (!query) {
+    console.log(chalk.gray('  ⧈ ') + chalk.cyan('BUTTON') + chalk.gray(' ── ') + chalk.white(senderNum) + chalk.red(' EMPTY FIND TAP'));
+    return;
+  }
+
+  // DM mode gate (mirror command routing).
+  if (!from.endsWith('@g.us')) {
+    const currentMode = getMode();
+    if (currentMode === 'owner' && !isOwner(sender, msg.pushName || '')) {
+      console.log(chalk.gray('  ⧈ ') + chalk.cyan('MODE') + chalk.gray(' ── ') + chalk.white(senderNum) + chalk.red(' OWNER-ONLY BUTTON TAP'));
+      return sock.sendMessage(from, { text: '⫎ Bot is in *Owner mode* — only the bot owner can use commands in DM.' }, { quoted: msg });
+    }
+  } else {
+    // Group quota gate runs inside song.js (skipQuota stays false).
+  }
+
+  console.log(chalk.gray('  ⧈ ') + chalk.cyan('BUTTON') + chalk.gray(' ── ') + chalk.white(senderNum) + chalk.yellow(' FIND-DOWNLOAD ') + chalk.white(query));
+
+  const sent = await songCommand.sendSong(sock, msg, query, {
+    from,
+    sender,
+    pushName: msg.pushName || '',
+    quietFailure: true,
+    react: async (emoji) => {
+      try { await sock.sendMessage(from, { react: { text: emoji, key: msg.key } }); } catch (_) {}
+    },
+  });
+
+  if (!sent) {
+    await sock.sendMessage(from, {
+      text: buildStatusCard({
+        title: 'SONG DOWNLOAD',
+        status: '❌ Button download failed.',
+        lines: ['Try .song directly or tap once more.'],
+      })
+    }, { quoted: msg });
+  }
+}
+
+async function handleFindVideoTap(sock, msg, from, sender, senderNum, tapId) {
+  const query = decodeURIComponent(tapId.slice('viddl:'.length)).trim();
+  if (!query) {
+    console.log(chalk.gray('  ⧈ ') + chalk.cyan('BUTTON') + chalk.gray(' ── ') + chalk.white(senderNum) + chalk.red(' EMPTY VID TAP'));
+    return;
+  }
+
+  if (!from.endsWith('@g.us')) {
+    const currentMode = getMode();
+    if (currentMode === 'owner' && !isOwner(sender, msg.pushName || '')) {
+      console.log(chalk.gray('  ⧈ ') + chalk.cyan('MODE') + chalk.gray(' ── ') + chalk.white(senderNum) + chalk.red(' OWNER-ONLY BUTTON TAP'));
+      return sock.sendMessage(from, { text: '⫎ Bot is in *Owner mode* — only the bot owner can use commands in DM.' }, { quoted: msg });
+    }
+  }
+
+  console.log(chalk.gray('  ⧈ ') + chalk.cyan('BUTTON') + chalk.gray(' ── ') + chalk.white(senderNum) + chalk.yellow(' FIND-VIDEO ') + chalk.white(query));
+
+  try {
+    await videoCommand.execute(sock, msg, [query], {
+      from,
+      sender,
+      pushName: msg.pushName || '',
+      react: async (emoji) => {
+        try { await sock.sendMessage(from, { react: { text: emoji, key: msg.key } }); } catch (_) {}
+      },
+    });
+  } catch (error) {
+    console.error('[BUTTON] video tap failed:', error?.message || error);
+    await sock.sendMessage(from, {
+      text: buildStatusCard({
+        title: 'VIDEO DOWNLOAD',
+        status: '❌ Button video fetch failed.',
+        lines: ['Try .video directly.'],
+      })
+    }, { quoted: msg });
+  }
+}
+
 async function handleMessage(sock, msg) {
   const from = msg.key?.remoteJid;
   // In a 1:1 chat, WhatsApp never sets `participant` - only groups do. So
@@ -173,7 +298,28 @@ async function handleMessage(sock, msg) {
     : (msg.key.participant || from);
   const senderNum = sender?.split('@')[0] || '?';
   try {
+    songRecommend.clear(sender);
+
     if (!from || !msg.message) { console.log(chalk.gray('  ⧈ ') + chalk.cyan('HANDLER') + chalk.gray(' ── ') + chalk.white(senderNum) + chalk.red(' NO MSG')); return; }
+
+    const nativeFlow = msg.message?.interactiveResponseMessage?.nativeFlowResponseMessage;
+    if (nativeFlow?.paramsJson) {
+      let tapParams = {};
+      try { tapParams = JSON.parse(nativeFlow.paramsJson); } catch (_) {}
+      const tapId = typeof tapParams?.id === 'string' ? tapParams.id : '';
+      if (tapId.startsWith('finddl:')) {
+        await handleFindDownloadTap(sock, msg, from, sender, senderNum, tapId);
+        return;
+      }
+      if (tapId.startsWith('viddl:')) {
+        await handleFindVideoTap(sock, msg, from, sender, senderNum, tapId);
+        return;
+      }
+      if (tapId.startsWith('ytselect:')) {
+        await handleFindDownloadTap(sock, msg, from, sender, senderNum, `finddl:${tapId.slice('ytselect:'.length)}`);
+        return;
+      }
+    }
 
     const messageType = Object.keys(msg.message).find(k => k !== 'messageContextInfo');
     if (!messageType) { console.log(chalk.gray('  ⧈ ') + chalk.cyan('HANDLER') + chalk.gray(' ── ') + chalk.white(senderNum) + chalk.red(' NO TYPE')); return; }
@@ -186,11 +332,36 @@ async function handleMessage(sock, msg) {
       normalizedMsg?.documentMessage?.caption ||
       '';
 
-    if (!body.startsWith(config.prefix)) { console.log(chalk.gray('  ⧈ ') + chalk.cyan('HANDLER') + chalk.gray(' ── ') + chalk.white(senderNum) + chalk.red(' NO PREFIX')); return; }
+    const isMentionTrigger = from.endsWith('@g.us') && botWasMentioned(sock, msg, body);
+    let args = [];
+    let commandName = '';
+    let wasPrefixCommand = false;
+    let bypassSudoForMention = false;
+    let downloadIdentifiedSong = false;
 
-    const args = body.slice(config.prefix.length).trim().split(/ +/);
-    const commandName = args.shift()?.toLowerCase();
-    if (!commandName) { console.log(chalk.gray('  ⧈ ') + chalk.cyan('HANDLER') + chalk.gray(' ── ') + chalk.white(senderNum) + chalk.red(' EMPTY CMD')); return; }
+    if (body.startsWith(config.prefix)) {
+      wasPrefixCommand = true;
+      args = body.slice(config.prefix.length).trim().split(/ +/);
+      commandName = args.shift()?.toLowerCase();
+    } else if (isMentionTrigger && hasVideoFindTarget(normalizedMsg)) {
+      commandName = 'find';
+      bypassSudoForMention = true;
+      downloadIdentifiedSong = true;
+    } else if (isMentionTrigger) {
+      const mentionText = stripBotMention(sock, body);
+      const mentionArgs = mentionText ? mentionText.split(/ +/) : [];
+      const possibleCommand = mentionArgs.shift()?.toLowerCase();
+      const possibleCmd = possibleCommand ? commands.get(possibleCommand) : null;
+      if (possibleCmd?.name === 'lyrics') {
+        commandName = possibleCommand;
+        args = mentionArgs;
+        bypassSudoForMention = true;
+      }
+    }
+
+    if (!commandName && isMentionTrigger) { console.log(chalk.gray('  ⧈ ') + chalk.cyan('MENTION') + chalk.gray(' ── ') + chalk.white(senderNum) + chalk.red(' NO ROUTE')); return; }
+    if (!commandName && wasPrefixCommand) { console.log(chalk.gray('  ⧈ ') + chalk.cyan('HANDLER') + chalk.gray(' ── ') + chalk.white(senderNum) + chalk.red(' EMPTY CMD')); return; }
+    if (!commandName) { console.log(chalk.gray('  ⧈ ') + chalk.cyan('HANDLER') + chalk.gray(' ── ') + chalk.white(senderNum) + chalk.red(' NO PREFIX')); return; }
 
     const cmd = commands.get(commandName);
     if (!cmd) { console.log(chalk.gray('  ⧈ ') + chalk.cyan('HANDLER') + chalk.gray(' ── ') + chalk.white(senderNum) + chalk.red(' UNKNOWN ') + chalk.gray(commandName)); return; }
@@ -219,7 +390,7 @@ async function handleMessage(sock, msg) {
       const isSudoAllowed = allowedCommands.includes('*') || allowedCommands.includes(commandName);
       if (isSudoCommand) {
         if (!isOwnerUser) { console.log(chalk.gray('  ⧈ ') + chalk.cyan('SUDO') + chalk.gray(' ── ') + chalk.white(senderNum) + chalk.red(' DENIED')); return; }
-      } else if (!isSudoAllowed) {
+      } else if (!isSudoAllowed && !bypassSudoForMention) {
         console.log(chalk.gray('  ⧈ ') + chalk.cyan('PERM') + chalk.gray(' ── ') + chalk.white(senderNum) + chalk.red(' NOT ALLOWED ') + chalk.gray(commandName));
         return;
       }
@@ -246,13 +417,19 @@ async function handleMessage(sock, msg) {
         }
       }
     } else {
-      if (!isOwnerUser) { console.log(chalk.gray('  ⧈ ') + chalk.cyan('PERM') + chalk.gray(' ── ') + chalk.white(senderNum) + chalk.red(' DM BLOCKED (not owner)')); return; }
+      const currentMode = getMode();
+      if (currentMode === 'owner' && !isOwnerUser) {
+        console.log(chalk.gray('  ⧈ ') + chalk.cyan('MODE') + chalk.gray(' ── ') + chalk.white(senderNum) + chalk.red(' OWNER-ONLY DM ') + chalk.gray(commandName));
+        return sock.sendMessage(from, { text: '⫎ Bot is in *Owner mode* — only the bot owner can use commands in DM.' }, { quoted: msg });
+      }
     }
 
     const extra = {
       from,
       sender,
       pushName,
+      isMentionTrigger,
+      downloadIdentifiedSong,
       getCommands: () => commands,
       reply: async (text, extraContent) => {
         await sock.sendMessage(from, { text: String(text), ...(extraContent || {}) }, { quoted: msg });
