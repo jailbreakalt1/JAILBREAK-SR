@@ -23,9 +23,9 @@ const config = {
     mode: process.env.MODE || 'owner',
 
     // Dedicated media download backend (Instagram/Pinterest/TikTok/Facebook).
-    // Standalone service: JAILBREAK-MEDIA-BACKEND (hosted on Render/Vercel).
+    // Live backend: downloader-backend deployed on Render.
     mediaBackend: {
-        url: process.env.MEDIA_BACKEND_URL || 'http://127.0.0.1:3000',
+        url: process.env.MEDIA_BACKEND_URL || 'https://jailbreakdl.onrender.com',
         token: process.env.MEDIA_BACKEND_TOKEN || '',
     },
 
@@ -62,6 +62,36 @@ const config = {
         clientAccessToken: process.env.GENIUS_ACCESS_TOKEN || 'r_0eyQ2ropDyGqztpRZ_38rnUsO6Zw3LqCi_e7Ch4Ncz6N-ozkTRaF-Siz0kAOur',
         clientId:          process.env.GENIUS_CLIENT_ID    || 'i-gjcga_WIhgqdWjqK3ICcQ9yzva8vM3rRMbhz5CZZo05oSIKSpN4DtDhhio_8Jm',
         clientSecret:      process.env.GENIUS_CLIENT_SECRET || 'n4zkk34fd-6tIn-XAjcZqwkcXydoz_FS-8fKxIF3ov22GKjAu4HusUCkERTMVx9Nm7dOSAr3ehg1EkvtQTTqCA',
+    },
+
+    // ── AI Brain (NVIDIA NIM) ──────────────────────────────────────────────
+    // Get your key at https://build.nvidia.com  →  set NVIDIA_API_KEY env var
+    // or paste it directly below (not recommended for public repos).
+    nvidia: {
+        apiKey: process.env.NVIDIA_API_KEY || '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',
+        model:  process.env.NVIDIA_MODEL   || 'google/diffusiongemma-26b-a4b-it',
+        // If the primary model above times out or errors, brain/ai.js retries
+        // once against the media-key model (config.nvidiaMedia) before giving
+        // up. Set this to override which model that backup attempt uses —
+        // leave blank to just reuse config.nvidiaMedia.model.
+        fallbackModel: process.env.NVIDIA_FALLBACK_MODEL || '',
+    },
+
+    // ── AI Eyes (NVIDIA NIM — vision/omni model) ────────────────────────────
+    // Separate key from the text brain above. Only hit when an incoming
+    // message actually contains image media. Get a key at https://build.nvidia.com
+    nvidiaMedia: {
+        apiKey: process.env.NVIDIA_MEDIA_API_KEY || '',
+        model:  process.env.NVIDIA_MEDIA_MODEL   || 'nvidia/nemotron-3-nano-omni-30b-a3b-reasoning',
+        // Heavier reasoning model used only to condense long per-chat memory
+        // into a compact summary note (see brain/memory.js). Same media key.
+        summaryModel: process.env.NVIDIA_SUMMARY_MODEL || 'nvidia/nemotron-3-ultra-550b-a55b',
+    },
+
+    // AI chat settings
+    ai: {
+        // Who can trigger AI chat? 'all' = everyone, 'owner' = owner only
+        access: process.env.AI_ACCESS || 'all',
     }
 };
 

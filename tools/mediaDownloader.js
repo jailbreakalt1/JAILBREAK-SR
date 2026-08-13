@@ -13,7 +13,7 @@ const { createTempFilePath, deleteTempFile } = require('./tempManager');
  * X-Media-Type headers. Errors come back as JSON { error, message }.
  *
  * Point the bot at it via MEDIA_BACKEND_URL, e.g.:
- *   MEDIA_BACKEND_URL=http://127.0.0.1:3000   npm start
+ *   MEDIA_BACKEND_URL=https://jailbreakdl.onrender.com   npm start
  */
 
 const REQUEST_TIMEOUT_MS = 120000;
@@ -31,7 +31,7 @@ const EXT_BY_CONTENT_TYPE = {
 };
 
 function backendBase() {
-  return (config.mediaBackend && config.mediaBackend.url) || 'http://127.0.0.1:3000';
+  return (config.mediaBackend && config.mediaBackend.url) || 'https://jailbreakdl.onrender.com';
 }
 
 function backendHeaders() {
