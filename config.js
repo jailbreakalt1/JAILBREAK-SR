@@ -33,7 +33,7 @@ const config = {
     // Used by the media backend as an optional Instagram fallback.
     // Set key via env var: INSTAGAPI_KEY
     instagapi: {
-        apiKey: process.env.INSTAGAPI_KEY || '',
+        apiKey: process.env.INSTAGAPI_KEY || 'sk_live_0a5dc2bda0ec4b3980d06091bb64e81f',
     },
 
     messages: {
