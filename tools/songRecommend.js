@@ -1,11 +1,10 @@
-const fs = require('fs');
 const fsp = require('fs/promises');
 const yts = require('yt-search');
-const axios = require('axios');
 const { Innertube } = require('youtubei.js');
 const downloadQueue = require('./downloadQueue');
 const APIs = require('./api');
 const { toAudioFile } = require('./converter');
+const { getSong, downloadToDisk } = require('./mediaDownloader');
 const CHANNEL_URL = 'https://whatsapp.com/channel/0029Vb6zZKpKbYMFqRWgx62q';
 const { createTempFilePath, deleteTempFiles } = require('./tempManager');
 
@@ -177,26 +176,6 @@ const timebox = (promise, ms, label = '') => {
   return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
 };
 
-async function downloadToDisk(url, destPath) {
-  const response = await axios.get(url, {
-    responseType: 'stream',
-    timeout: 90000,
-    headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' },
-    validateStatus: (status) => status >= 200 && status < 400
-  });
-
-  await new Promise((resolve, reject) => {
-    const writer = fs.createWriteStream(destPath);
-    response.data.pipe(writer);
-    writer.on('finish', resolve);
-    writer.on('error', reject);
-    response.data.on('error', reject);
-  });
-
-  const stat = await fsp.stat(destPath);
-  if (!stat.size) throw new Error('Empty audio file.');
-}
-
 async function detectExt(filePath) {
   const fd = await fsp.open(filePath, 'r');
   try {
@@ -213,21 +192,16 @@ async function detectExt(filePath) {
 }
 
 async function resolveAudioDownload(youtubeUrl, query) {
-  const sources = [];
-  if (query) sources.push(() => APIs.getMp3JuiceDownload(query));
-  sources.push(
-    () => APIs.getEliteProTechDownloadByUrl(youtubeUrl),
-    () => APIs.getYupraDownloadByUrl(youtubeUrl),
-    () => APIs.getOkatsuDownloadByUrl(youtubeUrl),
-    () => APIs.getIzumiDownloadByUrl(youtubeUrl),
-  );
-  for (const method of sources) {
-    try {
-      const payload = await method();
-      const mediaUrl = payload.download || payload.dl || payload.url || payload.result?.download || payload.result?.url;
-      if (mediaUrl) return { payload, mediaUrl };
-    } catch (_) {}
-  }
+  try {
+    const media = await getSong(youtubeUrl);
+    if (media?.filePath) {
+      return { payload: { title: media.title || 'Song' }, localPath: media.filePath };
+    }
+  } catch (_) {}
+  try {
+    const payload = await APIs.getEliteProTechDownloadByUrl(youtubeUrl);
+    if (payload?.download) return { payload, mediaUrl: payload.download };
+  } catch (_) {}
   throw new Error('All audio sources failed.');
 }
 
@@ -255,18 +229,22 @@ async function sendBestCandidate(meta, pool, deadline) {
     let rawPath = null;
     let finalPath = null;
     try {
-      const { mediaUrl } = await timebox(
+      const resolved = await timebox(
         resolveAudioDownload(buildWatchUrl(pick.id), `${pick.title} ${pick.authorName}`),
         CANDIDATE_BUDGET_MS,
         `download-${pick.id}`
       );
 
-      rawPath = createTempFilePath('recommend', 'raw');
-      await timebox(
-        downloadToDisk(mediaUrl, rawPath),
-        Math.min(CANDIDATE_BUDGET_MS, Math.max(0, deadline - Date.now())),
-        `fetch-${pick.id}`
-      );
+      if (resolved.localPath) {
+        rawPath = resolved.localPath;
+      } else {
+        rawPath = createTempFilePath('recommend', 'raw');
+        await timebox(
+          downloadToDisk(resolved.mediaUrl, rawPath),
+          Math.min(CANDIDATE_BUDGET_MS, Math.max(0, deadline - Date.now())),
+          `fetch-${pick.id}`
+        );
+      }
 
       const ext = await detectExt(rawPath);
       if (ext === 'mp3') {

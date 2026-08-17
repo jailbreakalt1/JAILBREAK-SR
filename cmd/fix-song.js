@@ -1,10 +1,9 @@
-const axios = require('axios');
-const fs = require('fs');
 const fsp = require('fs/promises');
 const yts = require('yt-search');
 const config = require('../config');
 const APIs = require('../tools/api');
 const { toAudioFile } = require('../tools/converter');
+const { getSong, downloadToDisk } = require('../tools/mediaDownloader');
 const { cleanNumber, toPhoneJid } = require('../tools/jidCleanser');
 const quota = require('../tools/quota');
 const songRecommend = require('../tools/songRecommend');
@@ -12,17 +11,14 @@ const { buildStatusCard } = require('../tools/style');
 const { sendInteractiveMessage } = require('@ryuu-reinzz/button-helper');
 const downloadQueue = require('../tools/downloadQueue');
 const { createTempFilePath, deleteTempFiles } = require('../tools/tempManager');
+const { getLiveState } = require('../tools/liveDetector');
+const buttonContext = require('../tools/buttonContext');
 
 const CHANNEL_URL = 'https://whatsapp.com/channel/0029Vb6zZKpKbYMFqRWgx62q';
-const AXIOS_HEADERS = {
-  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-  Accept: '*/*',
-  'Accept-Encoding': 'identity'
-};
 
-const sanitize = (value, fallback = 'song') => (value || fallback).replace(/[\\/:*?"<>|]+/g, '').trim() || fallback;
+const sanitize = (value, fallback = 'song') => String(value || fallback).replace(/[\\/:*?"<>|]+/g, '').trim() || fallback;
 const buildJailbreakCaption = ({ info, author, ago, senderNum, emoji }) =>
-`⧯ *𝙹𝙰𝙸𝙻𝙱𝚁𝙴𝙰𝙺_𝚂𝚁* 𝙱𝚁𝙸𝙽𝙶𝚂 𝚈𝙾𝚄\n⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯\n◈ *𝚃𝙸𝚃𝙻𝙴 :* \`${info.title}\`\n◈ *𝙰𝚁𝚃𝙸𝚂𝚃 :* \`${author}\`\n◈ *𝚁𝙴𝙻𝙴𝙰𝚂𝙴𝙳 :* \`${ago}\`\n◈ *𝙳𝚄𝚁𝙰𝚃𝙸𝙾𝙽 :* \`${info.timestamp}\`\n⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯\n⎆ @${senderNum} _ENJOY_ ${emoji}\n  join our channel: ${CHANNEL_URL}\n> ☬ *𝚂𝙾𝚄𝚁𝙲𝙴 :* 𝙹𝙰𝙸𝙻𝙱𝚁𝙴𝙰𝙺 ☬`;
+`⧯ *𝙹𝙰𝙸𝙻𝙱𝚁𝙴𝙰𝙺_𝚂𝚁* 𝙱𝚁𝙸𝙽𝙶𝚂 𝚈𝙾𝚄\n⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯\n◈ *𝚃𝙸𝚃𝙻𝙴 :* \`${info.title}\`\n◈ *𝙰𝚁𝚃𝙸𝚂𝚃 :* \`${author}\`\n◈ *𝚁𝙴𝙻𝙴𝙰𝚂𝙴𝙳 :* \`${ago}\`\n◈ *𝙳𝚄𝚁𝙰𝚃𝙸𝙾𝙽 :* \`${info.timestamp}\`\n⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯\n⎆ @${senderNum} _ENJOY_ ${emoji}\n> ☬ *𝚂𝙾𝚄𝚁𝙲𝙴 :* 𝙹𝙰𝙸𝙻𝙱𝚁𝙴𝙰𝙺 ☬`;
 
 // ── YouTube metadata resolver (unchanged) ────────────────────────────────────
 const resolveSong = async (query) => {
@@ -37,60 +33,52 @@ const resolveSong = async (query) => {
       timestamp: video.timestamp || 'Unknown',
       thumbnail: video.thumbnail || 'https://files.catbox.moe/s80m7e.png'
     },
-    author: video.author?.name || 'Unknown Artist',
+    author: String(video.author?.name || 'Unknown Artist'),
     ago: video.ago || 'Recently'
   };
 };
 
-// ── Audio download resolver (unchanged) ──────────────────────────────────────
-const resolveAudioDownload = async (query, youtubeUrl) => {
-  try {
-    const payload = await APIs.getMp3JuiceDownload(query);
-    const mediaUrl = payload.download || payload.url;
-    if (mediaUrl) return { payload, mediaUrl };
-  } catch (err) {
-    console.warn('[song] MP3Juice failed:', err.message);
+const resolveSongCandidates = async (query) => {
+  const search = await yts(query);
+  return (search?.videos?.slice(0, 5) || []).map((video) => ({
+    url: video.url,
+    videoId: video.videoId,
+    info: {
+      title: video.title || 'Unknown Title',
+      timestamp: video.timestamp || 'Unknown',
+      thumbnail: video.thumbnail || 'https://files.catbox.moe/s80m7e.png'
+    },
+    author: String(video.author?.name || 'Unknown Artist'),
+    ago: video.ago || 'Recently'
+  }));
+};
+
+// ── Audio download resolver ──────────────────────────────────────────────────
+// jailbreakdl backend is the primary source (downloads the file itself);
+// EliteProTech is the fallback for the one external API that still works.
+const resolveAudioDownload = async (query, youtubeUrls) => {
+  for (const youtubeUrl of youtubeUrls) {
+    try {
+      const media = await getSong(youtubeUrl);
+      if (media?.filePath) {
+        return { payload: { title: media.title || 'Song' }, localPath: media.filePath };
+      }
+    } catch (err) {
+      console.warn('[song] jailbreakdl failed:', err.message);
+    }
   }
 
-  for (const method of [
-    () => APIs.getEliteProTechDownloadByUrl(youtubeUrl),
-    () => APIs.getYupraDownloadByUrl(youtubeUrl),
-    () => APIs.getOkatsuDownloadByUrl(youtubeUrl),
-    () => APIs.getIzumiDownloadByUrl(youtubeUrl),
-  ]) {
+  for (const youtubeUrl of youtubeUrls) {
     try {
-      const payload = await method();
-      const mediaUrl = payload.download || payload.dl || payload.url || payload.result?.download || payload.result?.url;
+      const payload = await APIs.getEliteProTechDownloadByUrl(youtubeUrl);
+      const mediaUrl = payload.download;
       if (mediaUrl) return { payload, mediaUrl };
-    } catch (_) {}
+    } catch (err) {
+      console.warn('[song] EliteProTech failed:', err.message);
+    }
   }
 
   throw new Error('All audio sources failed.');
-};
-
-// ── Disk-backed download + conversion helpers ────────────────────────────────
-
-// Streams the HTTP response straight to a file — never holds the full
-// response in a JS Buffer, so peak RAM stays roughly at chunk size
-// regardless of how big the track is.
-const downloadToDisk = async (url, destPath) => {
-  const response = await axios.get(url, {
-    responseType: 'stream',
-    timeout: 90000,
-    headers: AXIOS_HEADERS,
-    validateStatus: (status) => status >= 200 && status < 400
-  });
-
-  await new Promise((resolve, reject) => {
-    const writer = fs.createWriteStream(destPath);
-    response.data.pipe(writer);
-    writer.on('finish', resolve);
-    writer.on('error', reject);
-    response.data.on('error', reject);
-  });
-
-  const stat = await fsp.stat(destPath);
-  if (!stat.size) throw new Error('Empty audio file.');
 };
 
 // Only reads the first 12 bytes off disk to sniff the container format —
@@ -142,13 +130,38 @@ const sendSongCore = async (sock, msg, query, extra = {}) => {
       }
     }
 
-    const song = await resolveSong(query);
-    if (!song) throw new Error('No results found for that query.');
+    const songCandidates = await resolveSongCandidates(query);
+    if (!songCandidates.length) throw new Error('No results found for that query.');
+    const song = songCandidates[0];
 
-    const { payload, mediaUrl } = await resolveAudioDownload(query, song.url);
+    const liveState = await getLiveState(song.videoId);
+    if (liveState) {
+      await sock.sendMessage(from, {
+        text: buildStatusCard({
+          title: 'SONG DOWNLOAD',
+          status: liveState === 'live'
+            ? '❌ Live streams cannot be downloaded'
+            : '❌ That stream has not started yet',
+          lines: [
+            liveState === 'live'
+              ? `"${song.info.title}" is a live stream — there's no finished audio to grab.`
+              : `"${song.info.title}" is scheduled and hasn't aired yet.`,
+            'Try a regular song or a different search.',
+          ],
+        })
+      }, { quoted: msg });
+      if (typeof extra.react === 'function') await extra.react('❌');
+      return false;
+    }
 
-    rawPath = createTempFilePath('song', 'raw');
-    await downloadToDisk(mediaUrl, rawPath);
+    const { payload, mediaUrl, localPath } = await resolveAudioDownload(query, songCandidates.map((c) => c.url));
+
+    if (localPath) {
+      rawPath = localPath;
+    } else {
+      rawPath = createTempFilePath('song', 'raw');
+      await downloadToDisk(mediaUrl, rawPath);
+    }
 
     const ext = await detectExt(rawPath);
     let mimetype = 'audio/mpeg';
@@ -167,22 +180,30 @@ const sendSongCore = async (sock, msg, query, extra = {}) => {
     const fileName = `${sanitize(song.author, 'Unknown Artist')} - ${sanitize(payload.title || song.info.title)}.mp3`;
 
     let q2;
-    if (isDM) {
+    if (isDM || extra.skipQuota) {
       q2 = { used: 0, total: Infinity };
     } else {
       q2 = quota.useQuota(sender);
       quota.recordArtist(sender, song.author);
     }
 
+    const videoQuery = `${song.author} - ${payload.title || song.info.title}`;
+    const captionText = buildJailbreakCaption({ info: song.info, author: song.author, ago: song.ago, senderNum, emoji: '🎧' }) + `\n_@${senderNum}, you've used ${q2.used}/${q2.total} today — ${q2.total - q2.used} remaining_`;
+
+    // 1) The document goes out as a plain message — the same proven path
+    //    songRecommend uses. No interactive-with-media fusion.
     await sock.sendMessage(from, {
       document: { url: finalPath },
       mimetype,
       fileName,
-      caption: buildJailbreakCaption({ info: song.info, author: song.author, ago: song.ago, senderNum, emoji: '🎧' }) + `\n_@${senderNum}, you've used ${q2.used}/${q2.total} today — ${q2.total - q2.used} remaining_`,
+      caption: captionText,
       mentions: [senderJid]
-    }, { quoted: msg });
+    }, { quoted: msg, __skipStyle: true });
 
-    const videoQuery = `${song.author} - ${payload.title || song.info.title}`;
+    // 2) Buttons are a separate follow-up, sent only after the document
+    //    itself was delivered. The query is remembered so a tap that
+    //    arrives without a proper id can still be resolved.
+    buttonContext.set(from, { videoQuery });
     try {
       await sendInteractiveMessage(sock, from, {
         text: `⬇ *${payload.title || song.info.title}* delivered to @${senderNum}.`,
@@ -192,6 +213,13 @@ const sendSongCore = async (sock, msg, query, extra = {}) => {
             buttonParamsJson: JSON.stringify({
               display_text: '🎬 FETCH VIDEO',
               id: `viddl:${encodeURIComponent(videoQuery)}`,
+            }),
+          },
+          {
+            name: 'quick_reply',
+            buttonParamsJson: JSON.stringify({
+              display_text: '📸 FETCH PHOTOS',
+              id: `imgdl:${encodeURIComponent(videoQuery)}`,
             }),
           },
           {

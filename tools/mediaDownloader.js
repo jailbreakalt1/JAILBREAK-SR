@@ -3,7 +3,6 @@ const fs = require('fs');
 const path = require('path');
 const config = require('../config');
 const { createTempFilePath, deleteTempFile } = require('./tempManager');
-
 /**
  * Bot-side HTTP client for the standalone media backend
  * (JAILBREAK-MEDIA-BACKEND, deployable on Render).
@@ -17,6 +16,11 @@ const { createTempFilePath, deleteTempFile } = require('./tempManager');
  */
 
 const REQUEST_TIMEOUT_MS = 120000;
+
+// Ceiling for media we're willing to stage on disk for a WhatsApp send.
+// Staging first means a dead download URL can never make the actual send
+// fail mid-flight — the file is already local when we hand it to Baileys.
+const MAX_STAGED_BYTES = 64 * 1024 * 1024;
 
 const EXT_BY_CONTENT_TYPE = {
   'image/jpeg': 'jpg',
@@ -73,8 +77,8 @@ function extFromDisposition(disposition) {
  * Downloads one media item from the backend into the bot's temp dir.
  * Returns { filePath, ext, mediaType, title, platform }.
  */
-async function downloadMedia(url) {
-  const response = await axios.post(`${backendBase()}/api/download`, { url }, {
+async function backendDownload(apiPath, url) {
+  const response = await axios.post(`${backendBase()}${apiPath}`, { url }, {
     responseType: 'stream',
     timeout: REQUEST_TIMEOUT_MS,
     headers: backendHeaders(),
@@ -92,13 +96,28 @@ async function downloadMedia(url) {
               'bin';
   const filePath = createTempFilePath('media', ext);
 
-  await new Promise((resolve, reject) => {
-    const writer = fs.createWriteStream(filePath);
-    response.data.on('error', reject);
-    writer.on('error', reject);
-    writer.on('finish', resolve);
-    response.data.pipe(writer);
-  });
+  try {
+    await new Promise((resolve, reject) => {
+      const writer = fs.createWriteStream(filePath);
+      let received = 0;
+      response.data.on('data', (chunk) => {
+        received += chunk.length;
+        if (received > MAX_STAGED_BYTES) {
+          response.data.destroy(new Error(`File exceeds ${Math.round(MAX_STAGED_BYTES / 1024 / 1024)}MB — too big for WhatsApp.`));
+        }
+      });
+      response.data.on('error', reject);
+      writer.on('error', reject);
+      writer.on('finish', resolve);
+      response.data.pipe(writer);
+    });
+
+    const stat = await fs.promises.stat(filePath);
+    if (!stat.size) throw new Error('Downloaded file is empty.');
+  } catch (err) {
+    deleteTempFile(filePath);
+    throw err;
+  }
 
   return {
     filePath,
@@ -108,6 +127,15 @@ async function downloadMedia(url) {
     platform: headers['x-media-platform'] || '',
   };
 }
+
+const downloadMedia = (url) => backendDownload('/api/download', url);
+
+/**
+ * jailbreakdl media endpoints — songs (audio) and videos from any URL
+ * (YouTube etc). Streamed by the backend, staged on disk here.
+ */
+const getSong = (url) => backendDownload('/api/media/audio', url);
+const getVideo = (url) => backendDownload('/api/media/video', url);
 
 /**
  * Sends a downloaded media item to a chat, then deletes the temp file.
@@ -158,13 +186,57 @@ function getBackendStatus() {
     .catch(() => ({ reachable: false, data: null }));
 }
 
+/**
+ * Streams a URL straight to a file on disk (chunked — never held in RAM),
+ * then validates the result is non-empty and under MAX_STAGED_BYTES.
+ * Returns the final size in bytes. Throws with a readable message when the
+ * stream dies or the file comes back empty/oversized.
+ */
+async function downloadToDisk(url, destPath, { timeout = 90000, headers = {} } = {}) {
+  const response = await axios.get(url, {
+    responseType: 'stream',
+    timeout,
+    headers: {
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+      Accept: '*/*',
+      'Accept-Encoding': 'identity',
+      ...headers,
+    },
+    validateStatus: (status) => status >= 200 && status < 400,
+  });
+
+  await new Promise((resolve, reject) => {
+    const writer = fs.createWriteStream(destPath);
+    let received = 0;
+    const onData = (chunk) => {
+      received += chunk.length;
+      if (received > MAX_STAGED_BYTES) {
+        response.data.destroy(new Error(`File exceeds ${Math.round(MAX_STAGED_BYTES / 1024 / 1024)}MB — too big for WhatsApp.`));
+      }
+    };
+    response.data.on('data', onData);
+    response.data.on('error', reject);
+    writer.on('error', reject);
+    writer.on('finish', resolve);
+    response.data.pipe(writer);
+  });
+
+  const stat = await fs.promises.stat(destPath);
+  if (!stat.size) throw new Error('Downloaded file is empty.');
+  if (stat.size > MAX_STAGED_BYTES) throw new Error(`File exceeds ${Math.round(MAX_STAGED_BYTES / 1024 / 1024)}MB — too big for WhatsApp.`);
+  return stat.size;
+}
+
 module.exports = {
   getInstagram,
   getPinterest,
   getTikTok,
   getFacebook,
+  getSong,
+  getVideo,
   downloadMedia,
   sendMediaMessage,
   imageSearch,
+  downloadToDisk,
   getBackendStatus,
 };

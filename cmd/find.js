@@ -2,7 +2,7 @@ const ACRCloud = require('acrcloud');
 const yts = require('yt-search');
 const { downloadMediaMessage } = require('@whiskeysockets/baileys');
 const { sendInteractiveMessage } = require('@ryuu-reinzz/button-helper');
-const songCommand = require('./song');
+const songCommand = require('./fix-song');
 const quota = require('../tools/quota');
 const { buildCard, buildStatusCard } = require('../tools/style');
 const downloadQueue = require('../tools/downloadQueue');
@@ -117,16 +117,15 @@ module.exports = {
       const genres = song.genres?.map((g) => g.name).join(', ') || 'General';
       const query = `${title} ${artists}`.trim();
 
-      if (extra.downloadIdentifiedSong) {
-        if (typeof songCommand.sendSong !== 'function') {
-          throw new Error('Song downloader is unavailable.');
-        }
-        const sent = await songCommand.sendSong(sock, msg, query, { ...extra, skipQuota: true, quietFailure: true });
-        if (sent) {
-          quota.useQuota(sender);
-          if (typeof extra.react === 'function') await extra.react('✅');
-          return;
-        }
+      const sent = await songCommand.sendSong(sock, msg, query, {
+        ...extra,
+        skipQuota: true,
+        quietFailure: true,
+      });
+      if (sent) {
+        quota.useQuota(sender);
+        if (typeof extra.react === 'function') await extra.react('✅');
+        return;
       }
 
       let thumbnail = FALLBACK_THUMBNAIL;

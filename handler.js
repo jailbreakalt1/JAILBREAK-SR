@@ -7,8 +7,10 @@ const { normalizeMessageContent } = require('@whiskeysockets/baileys');
 const { cleanNumber, resolvePhoneJid, getOwnPhoneJid } = require('./tools/jidCleanser');
 const songRecommend = require('./tools/songRecommend');
 const quota = require('./tools/quota');
-const songCommand = require('./cmd/song');
-const videoCommand = require('./cmd/video');
+const songCommand = require('./cmd/fix-song');
+const videoCommand = require('./cmd/fix-video');
+const imgCommand = require('./cmd/fix-img');
+const buttonContext = require('./tools/buttonContext');
 const { buildStatusCard } = require('./tools/style');
 const { getMode } = require('./tools/modeManager');
 
@@ -221,7 +223,7 @@ async function handleFindDownloadTap(sock, msg, from, sender, senderNum, tapId) 
       return sock.sendMessage(from, { text: '⫎ Bot is in *Owner mode* — only the bot owner can use commands in DM.' }, { quoted: msg });
     }
   } else {
-    // Group quota gate runs inside song.js (skipQuota stays false).
+    // Group quota gate runs inside fix-song.js (skipQuota stays false).
   }
 
   console.log(chalk.gray('  ⧈ ') + chalk.cyan('BUTTON') + chalk.gray(' ── ') + chalk.white(senderNum) + chalk.yellow(' FIND-DOWNLOAD ') + chalk.white(query));
@@ -285,6 +287,44 @@ async function handleFindVideoTap(sock, msg, from, sender, senderNum, tapId) {
   }
 }
 
+async function handleFindImageTap(sock, msg, from, sender, senderNum, tapId) {
+  const query = decodeURIComponent(tapId.slice('imgdl:'.length)).trim();
+  if (!query) {
+    console.log(chalk.gray('  ⧈ ') + chalk.cyan('BUTTON') + chalk.gray(' ── ') + chalk.white(senderNum) + chalk.red(' EMPTY IMG TAP'));
+    return;
+  }
+
+  if (!from.endsWith('@g.us')) {
+    const currentMode = getMode();
+    if (currentMode === 'owner' && !isOwner(sender, msg.pushName || '')) {
+      console.log(chalk.gray('  ⧈ ') + chalk.cyan('MODE') + chalk.gray(' ── ') + chalk.white(senderNum) + chalk.red(' OWNER-ONLY BUTTON TAP'));
+      return sock.sendMessage(from, { text: '⫎ Bot is in *Owner mode* — only the bot owner can use commands in DM.' }, { quoted: msg });
+    }
+  }
+
+  console.log(chalk.gray('  ⧈ ') + chalk.cyan('BUTTON') + chalk.gray(' ── ') + chalk.white(senderNum) + chalk.yellow(' FIND-IMG ') + chalk.white(query));
+
+  try {
+    await imgCommand.execute(sock, msg, [query], {
+      from,
+      sender,
+      pushName: msg.pushName || '',
+      react: async (emoji) => {
+        try { await sock.sendMessage(from, { react: { text: emoji, key: msg.key } }); } catch (_) {}
+      },
+    });
+  } catch (error) {
+    console.error('[BUTTON] image tap failed:', error?.message || error);
+    await sock.sendMessage(from, {
+      text: buildStatusCard({
+        title: 'ARTIST PHOTOS',
+        status: '❌ Button photo fetch failed.',
+        lines: ['Try .img directly.'],
+      })
+    }, { quoted: msg });
+  }
+}
+
 async function handleMessage(sock, msg) {
   const from = msg.key?.remoteJid;
   // In a 1:1 chat, WhatsApp never sets `participant` - only groups do. So
@@ -302,25 +342,6 @@ async function handleMessage(sock, msg) {
 
     if (!from || !msg.message) { console.log(chalk.gray('  ⧈ ') + chalk.cyan('HANDLER') + chalk.gray(' ── ') + chalk.white(senderNum) + chalk.red(' NO MSG')); return; }
 
-    const nativeFlow = msg.message?.interactiveResponseMessage?.nativeFlowResponseMessage;
-    if (nativeFlow?.paramsJson) {
-      let tapParams = {};
-      try { tapParams = JSON.parse(nativeFlow.paramsJson); } catch (_) {}
-      const tapId = typeof tapParams?.id === 'string' ? tapParams.id : '';
-      if (tapId.startsWith('finddl:')) {
-        await handleFindDownloadTap(sock, msg, from, sender, senderNum, tapId);
-        return;
-      }
-      if (tapId.startsWith('viddl:')) {
-        await handleFindVideoTap(sock, msg, from, sender, senderNum, tapId);
-        return;
-      }
-      if (tapId.startsWith('ytselect:')) {
-        await handleFindDownloadTap(sock, msg, from, sender, senderNum, `finddl:${tapId.slice('ytselect:'.length)}`);
-        return;
-      }
-    }
-
     const messageType = Object.keys(msg.message).find(k => k !== 'messageContextInfo');
     if (!messageType) { console.log(chalk.gray('  ⧈ ') + chalk.cyan('HANDLER') + chalk.gray(' ── ') + chalk.white(senderNum) + chalk.red(' NO TYPE')); return; }
 
@@ -331,6 +352,69 @@ async function handleMessage(sock, msg) {
       normalizedMsg?.videoMessage?.caption ||
       normalizedMsg?.documentMessage?.caption ||
       '';
+
+    const nativeFlow = msg.message?.interactiveResponseMessage?.nativeFlowResponseMessage;
+    const templateReply = msg.message?.templateButtonReplyMessage;
+    const buttonsReply = msg.message?.buttonsResponseMessage;
+    const motionTap = msg.message?.interactiveResponseMessage?.motionResponseMessage;
+    let tapId = '';
+    let tapLabel = '';
+    if (nativeFlow?.paramsJson) {
+      let tapParams = {};
+      try { tapParams = JSON.parse(nativeFlow.paramsJson); } catch (_) {}
+      tapId = typeof tapParams?.id === 'string' ? tapParams.id : '';
+      tapLabel = typeof tapParams?.display_text === 'string' ? tapParams.display_text : '';
+    }
+    // Some clients deliver quick_reply taps as templateButtonReplyMessage
+    // (fields: selectedId / selectedDisplayText) or, on older clients, as
+    // buttonsResponseMessage (selectedButtonId / selectedDisplayText) —
+    // not as nativeFlowResponseMessage.
+    if (!tapId) {
+      if (typeof templateReply?.selectedId === 'string' && templateReply.selectedId) tapId = templateReply.selectedId;
+      else if (typeof templateReply?.id === 'string') tapId = templateReply.id;
+    }
+    if (!tapId) {
+      if (typeof buttonsReply?.selectedButtonId === 'string' && buttonsReply.selectedButtonId) tapId = buttonsReply.selectedButtonId;
+      else if (typeof buttonsReply?.selectedId === 'string') tapId = buttonsReply.selectedId;
+    }
+    if (!tapId && typeof motionTap?.id === 'string') tapId = motionTap.id;
+    tapLabel = tapLabel ||
+      (typeof templateReply?.selectedDisplayText === 'string' ? templateReply.selectedDisplayText : '') ||
+      (typeof buttonsReply?.selectedDisplayText === 'string' ? buttonsReply.selectedDisplayText : '');
+
+    // Some clients don't deliver the button id back (or deliver the tap as
+    // plain text of the display label). Match the label and pull the query
+    // from the button context we stored when the follow-up was sent.
+    if (!tapId) {
+      const ctx = buttonContext.get(from);
+      const label = tapLabel || body;
+      const prefix = ({ '🎬 FETCH VIDEO': 'viddl:', '🎵 GET MP3': 'finddl:', '📸 FETCH PHOTOS': 'imgdl:' })[label];
+      if (prefix && ctx?.videoQuery) tapId = prefix + encodeURIComponent(ctx.videoQuery);
+      if (!tapId && (nativeFlow || templateReply || buttonsReply || motionTap)) {
+        const raw = nativeFlow || templateReply || buttonsReply || motionTap || {};
+        console.log(chalk.gray('  ⧈ ') + chalk.cyan('BUTTON') + chalk.gray(' ── ') + chalk.white(senderNum) + chalk.red(' UNHANDLED TAP ') + chalk.gray(JSON.stringify(raw).slice(0, 160)));
+      }
+    }
+
+    if (tapId) {
+      console.log(chalk.gray('  ⧈ ') + chalk.cyan('TAP') + chalk.gray(' ── ') + chalk.white(senderNum) + chalk.gray(' ') + chalk.yellowBright(tapId.slice(0, 40)));
+      if (tapId.startsWith('finddl:')) {
+        await handleFindDownloadTap(sock, msg, from, sender, senderNum, tapId);
+        return;
+      }
+      if (tapId.startsWith('viddl:')) {
+        await handleFindVideoTap(sock, msg, from, sender, senderNum, tapId);
+        return;
+      }
+      if (tapId.startsWith('imgdl:')) {
+        await handleFindImageTap(sock, msg, from, sender, senderNum, tapId);
+        return;
+      }
+      if (tapId.startsWith('ytselect:')) {
+        await handleFindDownloadTap(sock, msg, from, sender, senderNum, `finddl:${tapId.slice('ytselect:'.length)}`);
+        return;
+      }
+    }
 
     const isMentionTrigger = from.endsWith('@g.us') && botWasMentioned(sock, msg, body);
     let args = [];
