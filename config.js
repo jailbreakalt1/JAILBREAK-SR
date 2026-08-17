@@ -22,10 +22,14 @@ const config = {
     autoBio: false,
     mode: process.env.MODE || 'owner',
 
-    // Dedicated media download backend (Instagram/Pinterest/TikTok/Facebook).
-    // Live backend: downloader-backend deployed on Render.
+    // Dedicated media download backend (Instagram/Pinterest/TikTok/Facebook
+    // + generic songs/videos via jailbreakdl).
+    // Default: local jailbreakdl (PORT 3100) — the Render host is blocked by
+    // YouTube/TikTok IP reputation (datacenter IPs), so songs/videos fail
+    // there. Render still works for image search; override with
+    // MEDIA_BACKEND_URL if the bot ever runs on a VPS.
     mediaBackend: {
-        url: process.env.MEDIA_BACKEND_URL || 'https://jailbreakdl.onrender.com',
+        url: process.env.MEDIA_BACKEND_URL || 'http://localhost:3100',
         token: process.env.MEDIA_BACKEND_TOKEN || '',
     },
 
