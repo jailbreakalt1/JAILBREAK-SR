@@ -24,13 +24,18 @@ const config = {
 
     // Dedicated media download backend (Instagram/Pinterest/TikTok/Facebook
     // + generic songs/videos via jailbreakdl).
-    // Default: local jailbreakdl (PORT 3100) — the Render host is blocked by
-    // YouTube/TikTok IP reputation (datacenter IPs), so songs/videos fail
-    // there. Render still works for image search; override with
-    // MEDIA_BACKEND_URL if the bot ever runs on a VPS.
+    // Live backend: Orihost VPS (PO-token stack, YouTube-safe IP). Render
+    // keeps image search only. Override with MEDIA_BACKEND_URL if needed.
     mediaBackend: {
-        url: process.env.MEDIA_BACKEND_URL || 'http://localhost:3100',
+        url: process.env.MEDIA_BACKEND_URL || 'http://92.118.206.4:30102',
         token: process.env.MEDIA_BACKEND_TOKEN || '',
+    },
+
+    // Image search backend — separate from media downloads. Render's IP is
+    // fine for image search (DuckDuckGo/Bing), so it stays there.
+    imageBackend: {
+        url: process.env.IMAGE_BACKEND_URL || 'https://jailbreakdl.onrender.com',
+        token: process.env.IMAGE_BACKEND_TOKEN || '',
     },
 
     // InstaGapi — free Instagram API (30 req/mo), sign up at instagapi.com.

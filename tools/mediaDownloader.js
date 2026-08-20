@@ -17,11 +17,8 @@ const { createTempFilePath, deleteTempFile } = require('./tempManager');
 
 const REQUEST_TIMEOUT_MS = 120000;
 
-// Ceiling for media we're willing to stage on disk for a WhatsApp send.
 // Staging first means a dead download URL can never make the actual send
 // fail mid-flight — the file is already local when we hand it to Baileys.
-const MAX_STAGED_BYTES = 64 * 1024 * 1024;
-
 const EXT_BY_CONTENT_TYPE = {
   'image/jpeg': 'jpg',
   'image/png': 'png',
@@ -38,8 +35,12 @@ function backendBase() {
   return (config.mediaBackend && config.mediaBackend.url) || 'https://jailbreakdl.onrender.com';
 }
 
-function backendHeaders() {
-  const token = config.mediaBackend && config.mediaBackend.token;
+function imageBackendBase() {
+  return (config.imageBackend && config.imageBackend.url) || 'https://jailbreakdl.onrender.com';
+}
+
+function imageBackendHeaders() {
+  const token = config.imageBackend && config.imageBackend.token;
   return token ? { Authorization: `Bearer ${token}` } : {};
 }
 
@@ -99,13 +100,6 @@ async function backendDownload(apiPath, url) {
   try {
     await new Promise((resolve, reject) => {
       const writer = fs.createWriteStream(filePath);
-      let received = 0;
-      response.data.on('data', (chunk) => {
-        received += chunk.length;
-        if (received > MAX_STAGED_BYTES) {
-          response.data.destroy(new Error(`File exceeds ${Math.round(MAX_STAGED_BYTES / 1024 / 1024)}MB — too big for WhatsApp.`));
-        }
-      });
       response.data.on('error', reject);
       writer.on('error', reject);
       writer.on('finish', resolve);
@@ -169,9 +163,9 @@ const getFacebook = (url) => downloadMedia(url);
  * Returns an array of direct image URLs.
  */
 async function imageSearch(query, count = 10) {
-  const response = await axios.post(`${backendBase()}/api/img/search`, { query, count }, {
+  const response = await axios.post(`${imageBackendBase()}/api/img/search`, { query, count }, {
     timeout: 60000,
-    headers: backendHeaders(),
+    headers: imageBackendHeaders(),
     validateStatus: () => true,
   });
   if (response.status !== 200) {
@@ -188,9 +182,9 @@ function getBackendStatus() {
 
 /**
  * Streams a URL straight to a file on disk (chunked — never held in RAM),
- * then validates the result is non-empty and under MAX_STAGED_BYTES.
+ * then validates the result is non-empty.
  * Returns the final size in bytes. Throws with a readable message when the
- * stream dies or the file comes back empty/oversized.
+ * stream dies or the file comes back empty.
  */
 async function downloadToDisk(url, destPath, { timeout = 90000, headers = {} } = {}) {
   const response = await axios.get(url, {
@@ -207,14 +201,6 @@ async function downloadToDisk(url, destPath, { timeout = 90000, headers = {} } =
 
   await new Promise((resolve, reject) => {
     const writer = fs.createWriteStream(destPath);
-    let received = 0;
-    const onData = (chunk) => {
-      received += chunk.length;
-      if (received > MAX_STAGED_BYTES) {
-        response.data.destroy(new Error(`File exceeds ${Math.round(MAX_STAGED_BYTES / 1024 / 1024)}MB — too big for WhatsApp.`));
-      }
-    };
-    response.data.on('data', onData);
     response.data.on('error', reject);
     writer.on('error', reject);
     writer.on('finish', resolve);
@@ -223,7 +209,6 @@ async function downloadToDisk(url, destPath, { timeout = 90000, headers = {} } =
 
   const stat = await fs.promises.stat(destPath);
   if (!stat.size) throw new Error('Downloaded file is empty.');
-  if (stat.size > MAX_STAGED_BYTES) throw new Error(`File exceeds ${Math.round(MAX_STAGED_BYTES / 1024 / 1024)}MB — too big for WhatsApp.`);
   return stat.size;
 }
 
