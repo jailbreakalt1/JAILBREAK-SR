@@ -15,9 +15,10 @@ if (process.env.NEWSLETTER_JID) {
 
 const STYLE_BYPASS_PREFIXES = [
   '‧₊˚♕‧₊˚',
-  '*╔═══════════════════╗*',
-  '╔═══════════════════╗',
-  '⧯ *𝙹𝙰𝙸𝙻𝙱𝚁𝙴𝙰𝙺_𝙰𝙸* 𝙱𝚁𝙸𝙽𝙶𝚂 𝚈𝙾𝚄'
+  '*',
+  '╔═',
+  '⧯',
+  '☬'
 ];
 
 const MENTION_PATTERN = /@(\d{5,15})\b/g;
@@ -70,7 +71,7 @@ const decorateText = (value) => {
     remainingLines ? `${remainingLines}ᯓ➤` : '🗁'
   ].join('\n');
 
-  return `*⧯ 𝙹𝙰𝙸𝙻𝙱𝚁𝙴𝙰𝙺_𝙰𝙸 ☬*\n`
+  return `*⧯ 𝙹𝙰𝙸𝙻𝙱𝚁𝙴𝙰𝙺_SR ☬*\n`
     + `⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯\n\n`
     + `${body}\n\n`
     + `> ▶︎•၊၊||၊|။|||||။၊|။|၊၊||၊၊၊၊•\n`

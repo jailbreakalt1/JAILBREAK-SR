@@ -78,7 +78,7 @@ module.exports = {
             text: buildStatusCard({
               title: 'VIDEO REQUEST',
               status: '⫎ Provide a video name or YouTube link.',
-              lines: [`Example: ${config.prefix}video CHAMUNORWA`],
+              lines: [`Example: ${config.prefix}video Alan Walker Faded`],
             })
           }, { quoted: msg });
         }
@@ -195,7 +195,7 @@ const sources = [
           senderNum,
           botName: instanceConfig.botName || config.botName || 'JAILBREAK',
           emoji: '🎬',
-        }) + `\n_@${senderNum}, you've used ${q2.used}/${q2.total} today — ${q2.total - q2.used} remaining_`;
+        }) + `\n_@${senderNum}, used ${q2.used}/${q2.total} today — ${q2.total - q2.used} remaining_`;
 
         // 1) The media goes out as a plain video message — the same
         //    proven path songRecommend uses. No interactive fusion.
@@ -213,7 +213,7 @@ const sources = [
         buttonContext.set(chatId, { videoQuery: title });
         try {
           await sendInteractiveMessage(sock, chatId, {
-            text: `🎬 *${title}* delivered to @${senderNum}. Want the audio instead?`,
+            text: `🎬 *${title}* delivered to @${senderNum}. \n > Want the audio instead?`,
             interactiveButtons: [
               {
                 name: 'quick_reply',

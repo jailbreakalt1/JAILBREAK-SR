@@ -59,8 +59,9 @@ module.exports = {
           return { ok: false, reason: 'invalid_link', message: 'The text did not contain a valid Instagram URL — told the user.' };
         }
 
+        const newLocal = '📥';
         await sock.sendMessage(chatId, {
-          react: { text: '📥', key: msg.key }
+          react: { text: newLocal, key: msg.key }
         });
 
         const media = await getInstagram(text);

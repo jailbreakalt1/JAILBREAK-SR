@@ -18,7 +18,7 @@ const CHANNEL_URL = 'https://whatsapp.com/channel/0029Vb6zZKpKbYMFqRWgx62q';
 
 const sanitize = (value, fallback = 'song') => String(value || fallback).replace(/[\\/:*?"<>|]+/g, '').trim() || fallback;
 const buildJailbreakCaption = ({ info, author, ago, senderNum, emoji }) =>
-`⧯ *𝙹𝙰𝙸𝙻𝙱𝚁𝙴𝙰𝙺_𝚂𝚁* 𝙱𝚁𝙸𝙽𝙶𝚂 𝚈𝙾𝚄\n⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯\n◈ *𝚃𝙸𝚃𝙻𝙴 :* \`${info.title}\`\n◈ *𝙰𝚁𝚃𝙸𝚂𝚃 :* \`${author}\`\n◈ *𝚁𝙴𝙻𝙴𝙰𝚂𝙴𝙳 :* \`${ago}\`\n◈ *𝙳𝚄𝚁𝙰𝚃𝙸𝙾𝙽 :* \`${info.timestamp}\`\n⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯\n⎆ @${senderNum} _ENJOY_ ${emoji}\n> ☬ *𝚂𝙾𝚄𝚁𝙲𝙴 :* 𝙹𝙰𝙸𝙻𝙱𝚁𝙴𝙰𝙺 ☬`;
+`⧯ *𝙹𝙰𝙸𝙻𝙱𝚁𝙴𝙰𝙺_𝚂𝚁* 𝙱𝚁𝙸𝙽𝙶𝚂 𝚈𝙾𝚄\n⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯\n◈ *𝚃𝙸𝚃𝙻𝙴 :* \`${info.title}\`\n◈ *𝙰𝚁𝚃𝙸𝚂𝚃 :* \`${author}\`\n◈ *𝚁𝙴𝙻𝙴𝙰𝚂𝙴𝙳 :* \`${ago}\`\n◈ *𝙳𝚄𝚁𝙰𝚃𝙸𝙾𝙽 :* \`${info.timestamp}\`\n⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯\n⎆ @${senderNum} _ENJOY_ ${emoji}\n𝙹`;
 
 // ── YouTube metadata resolver (unchanged) ────────────────────────────────────
 const resolveSong = async (query) => {
@@ -153,7 +153,7 @@ const sendSongCore = async (sock, msg, query, extra = {}) => {
     if (liveState) {
       await sock.sendMessage(from, {
         text: buildStatusCard({
-          title: 'SONG DOWNLOAD',
+          title: '☬ SONG DOWNLOAD',
           status: liveState === 'live'
             ? '❌ Live streams cannot be downloaded'
             : '❌ That stream has not started yet',
@@ -203,7 +203,7 @@ const sendSongCore = async (sock, msg, query, extra = {}) => {
     }
 
     const videoQuery = `${song.author} - ${payload.title || song.info.title}`;
-    const captionText = buildJailbreakCaption({ info: song.info, author: song.author, ago: song.ago, senderNum, emoji: '🎧' }) + `\n_@${senderNum}, you've used ${q2.used}/${q2.total} today — ${q2.total - q2.used} remaining_`;
+    const captionText = buildJailbreakCaption({ info: song.info, author: song.author, ago: song.ago, senderNum, emoji: '🎧' }) + `\n_@${senderNum}, _used ${q2.used}/${q2.total} today — ${q2.total - q2.used} remaining__`;
 
     // 1) The document goes out as a plain message — the same proven path
     //    songRecommend uses. No interactive-with-media fusion.
@@ -286,9 +286,9 @@ const sendSong = (sock, msg, query, extra = {}) => downloadQueue.run(() => sendS
 
 module.exports = {
   name: 'song',
-  aliases: ['play', 'music', 'yta'],
+  aliases: ['play', 'music'],
   category: 'cmd',
-  description: 'Search a track via MP3Juice and send it as a document',
+  description: 'Find and send it as a document',
   usage: '.song <song name or YouTube link>',
   sendSong,
 
@@ -298,9 +298,9 @@ module.exports = {
     if (!query) {
       await sock.sendMessage(from, {
         text: buildStatusCard({
-          title: 'SONG REQUEST',
-          status: '⫎ Provide a song name or YouTube link.',
-          lines: [`Example: ${config.prefix}play CHAMUNORWA Bagga`],
+          title: '☬ SONG REQUEST',
+          status: '> ⫎ Provide a song name or YouTube link.',
+          lines: [`Example: \n ${config.prefix}play you are the shadow to my light`],
         })
       }, { quoted: msg });
       return;

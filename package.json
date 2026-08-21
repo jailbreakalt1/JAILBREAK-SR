@@ -21,7 +21,7 @@
         "@ryuu-reinzz/button-helper": "^2.2.3",
         "@whiskeysockets/baileys": "^7.0.0-rc13",
         "acrcloud": "^1.4.0",
-        "axios": "^1.7.2",
+        "axios": "^1.19.0",
         "baileys": "npm:@whiskeysockets/baileys@7.0.0-rc14",
         "chalk": "^4.1.2",
         "moment-timezone": "^0.5.45",
