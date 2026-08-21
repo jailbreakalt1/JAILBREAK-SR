@@ -152,9 +152,14 @@ module.exports = {
           // backend is the source — it downloads the file itself, so the
           // local path comes straight back. No external API is trusted here:
           // EliteProTech/Yupra/Okatsu all died (dead links, dead DNS, 402).
-          const sources = [
-            () => getVideo(candidate.url),
-          ];
+          // External API (siputzx) first — light on our VPS.
+// Falls back to VPS backend (jailbreakdl).
+const sources = [
+  () => APIs.tiktokDownload(candidate.url).then(r => ({ download: r.download || r.url, title: r.title })),
+  () => APIs.igDownload(candidate.url).then(r => ({ download: r.download || r.url, title: r.title })),
+  () => APIs.ytDownload(candidate.url, 'video').then(r => ({ download: r.download || r.url, title: r.title })),
+  () => getVideo(candidate.url),
+];
           for (const method of sources) {
             try {
               const data = await method();
