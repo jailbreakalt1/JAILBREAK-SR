@@ -148,16 +148,9 @@ module.exports = {
             }
           }
 
-          // Try each candidate video (top 5 search results). The jailbreakdl
-          // backend is the source — it downloads the file itself, so the
-          // local path comes straight back. No external API is trusted here:
-          // EliteProTech/Yupra/Okatsu all died (dead links, dead DNS, 402).
-          // External API (siputzx) first — light on our VPS.
-// Falls back to VPS backend (jailbreakdl).
+          // Try the fast working provider first, then OriHost jailbreakdl.
 const sources = [
-  () => APIs.tiktokDownload(candidate.url).then(r => ({ download: r.download || r.url, title: r.title })),
-  () => APIs.igDownload(candidate.url).then(r => ({ download: r.download || r.url, title: r.title })),
-  () => APIs.ytDownload(candidate.url, 'video').then(r => ({ download: r.download || r.url, title: r.title })),
+  () => APIs.getEliteProTechDownloadByUrl(candidate.url, 'mp4'),
   () => getVideo(candidate.url),
 ];
           for (const method of sources) {

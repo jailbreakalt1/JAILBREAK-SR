@@ -193,14 +193,12 @@ async function detectExt(filePath) {
 
 async function resolveAudioDownload(youtubeUrl, query) {
   try {
-    const media = await getSong(youtubeUrl);
-    if (media?.filePath) {
-      return { payload: { title: media.title || 'Song' }, localPath: media.filePath };
-    }
+    const payload = await APIs.getEliteProTechDownloadByUrl(youtubeUrl, 'mp3');
+    if (payload?.download) return { payload, mediaUrl: payload.download };
   } catch (_) {}
   try {
-    const payload = await APIs.getEliteProTechDownloadByUrl(youtubeUrl);
-    if (payload?.download) return { payload, mediaUrl: payload.download };
+    const media = await getSong(youtubeUrl);
+    if (media?.filePath) return { payload: { title: media.title || 'Song' }, localPath: media.filePath };
   } catch (_) {}
   throw new Error('All audio sources failed.');
 }

@@ -54,23 +54,23 @@ const resolveSongCandidates = async (query) => {
 };
 
 // ── Audio download resolver ──────────────────────────────────────────────────
-// External API (siputzx) first — light on our VPS.
-// Falls back to VPS backend (jailbreakdl), then EliteProTech as last resort.
+// EliteProTech is currently the fast working source.
+// OriHost jailbreakdl remains the final fallback for reliability.
 const resolveAudioDownload = async (query, youtubeUrls) => {
-  // 1) External API first (siputzx)
+  // 1) EliteProTech
   for (const youtubeUrl of youtubeUrls) {
     try {
-      const payload = await APIs.ytDownload(youtubeUrl, 'audio');
-      const mediaUrl = payload?.download || payload?.url || payload?.link;
+      const payload = await APIs.getEliteProTechDownloadByUrl(youtubeUrl, 'mp3');
+      const mediaUrl = payload?.download;
       if (mediaUrl) {
         return { payload: { title: payload.title || 'Song' }, mediaUrl };
       }
     } catch (err) {
-      console.warn('[song] siputzx failed:', err.message);
+      console.warn('[song] EliteProTech failed:', err.message);
     }
   }
 
-  // 2) VPS backend (jailbreakdl) — our own reliable source
+  // 2) OriHost jailbreakdl — final fallback
   for (const youtubeUrl of youtubeUrls) {
     try {
       const media = await getSong(youtubeUrl);
@@ -79,17 +79,6 @@ const resolveAudioDownload = async (query, youtubeUrls) => {
       }
     } catch (err) {
       console.warn('[song] jailbreakdl failed:', err.message);
-    }
-  }
-
-  // 3) EliteProTech — last resort
-  for (const youtubeUrl of youtubeUrls) {
-    try {
-      const payload = await APIs.getEliteProTechDownloadByUrl(youtubeUrl);
-      const mediaUrl = payload.download;
-      if (mediaUrl) return { payload, mediaUrl };
-    } catch (err) {
-      console.warn('[song] EliteProTech failed:', err.message);
     }
   }
 

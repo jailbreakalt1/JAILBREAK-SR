@@ -24,42 +24,6 @@ const APIs = {
     }
   },
   
-  // YouTube Download
-  ytDownload: async (url, type = 'audio') => {
-    try {
-      const response = await api.get(`https://api.siputzx.my.id/api/d/ytmp3`, {
-        params: { url }
-      });
-      return response.data;
-    } catch (error) {
-      throw new Error('Failed to download YouTube video');
-    }
-  },
-  
-  // Instagram Download
-  igDownload: async (url) => {
-    try {
-      const response = await api.get(`https://api.siputzx.my.id/api/d/igdl`, {
-        params: { url }
-      });
-      return response.data;
-    } catch (error) {
-      throw new Error('Failed to download Instagram content');
-    }
-  },
-  
-  // TikTok Download
-  tiktokDownload: async (url) => {
-    try {
-      const response = await api.get(`https://api.siputzx.my.id/api/d/tiktok`, {
-        params: { url }
-      });
-      return response.data;
-    } catch (error) {
-      throw new Error('Failed to download TikTok video');
-    }
-  },
-  
   // Translate
   translate: async (text, to = 'en') => {
     try {
@@ -137,7 +101,7 @@ const APIs = {
   },
   
   // Song Download APIs
-  getEliteProTechDownloadByUrl: async (youtubeUrl) => {
+  getEliteProTechDownloadByUrl: async (youtubeUrl, format = 'mp3') => {
     const AXIOS_DEFAULTS = {
       timeout: 60000,
       headers: {
@@ -161,7 +125,7 @@ const APIs = {
       throw lastError;
     };
     
-    const apiUrl = `https://eliteprotech-apis.zone.id/ytdown?url=${encodeURIComponent(youtubeUrl)}&format=mp3`;
+    const apiUrl = `https://eliteprotech-apis.zone.id/ytdown?url=${encodeURIComponent(youtubeUrl)}&format=${format}`;
     const res = await tryRequest(() => axios.get(apiUrl, AXIOS_DEFAULTS));
     if (res?.data?.success && res?.data?.downloadURL) {
       return {
@@ -172,7 +136,7 @@ const APIs = {
     throw new Error('EliteProTech ytdown returned no download');
   },
 
-  // TikTok Download API
+  /* DEAD_TIKTOK_API_REMOVED
   getTikTokDownload: async (url) => {
     const apiUrl = `https://api.siputzx.my.id/api/d/tiktok?url=${encodeURIComponent(url)}`;
     try {
@@ -208,7 +172,7 @@ const APIs = {
     } catch (error) {
       throw new Error('TikTok download failed');
     }
-  },
+  }, */
   
   // Screenshot Website API
   screenshotWebsite: async (url) => {
