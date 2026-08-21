@@ -136,44 +136,6 @@ const APIs = {
     throw new Error('EliteProTech ytdown returned no download');
   },
 
-  /* DEAD_TIKTOK_API_REMOVED
-  getTikTokDownload: async (url) => {
-    const apiUrl = `https://api.siputzx.my.id/api/d/tiktok?url=${encodeURIComponent(url)}`;
-    try {
-      const response = await axios.get(apiUrl, { 
-        timeout: 15000,
-        headers: {
-          'accept': '*/*',
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-        }
-      });
-      
-      if (response.data && response.data.status && response.data.data) {
-        let videoUrl = null;
-        let title = null;
-        
-        if (response.data.data.urls && Array.isArray(response.data.data.urls) && response.data.data.urls.length > 0) {
-          videoUrl = response.data.data.urls[0];
-          title = response.data.data.metadata?.title || 'TikTok Video';
-        } else if (response.data.data.video_url) {
-          videoUrl = response.data.data.video_url;
-          title = response.data.data.metadata?.title || 'TikTok Video';
-        } else if (response.data.data.url) {
-          videoUrl = response.data.data.url;
-          title = response.data.data.metadata?.title || 'TikTok Video';
-        } else if (response.data.data.download_url) {
-          videoUrl = response.data.data.download_url;
-          title = response.data.data.metadata?.title || 'TikTok Video';
-        }
-        
-        return { videoUrl, title };
-      }
-      throw new Error('Invalid API response');
-    } catch (error) {
-      throw new Error('TikTok download failed');
-    }
-  }, */
-  
   // Screenshot Website API
   screenshotWebsite: async (url) => {
     try {
