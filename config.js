@@ -22,6 +22,20 @@ const config = {
     autoBio: false,
     mode: process.env.MODE || 'owner',
 
+    shift: {
+        enabled: process.env.SHIFT_ENABLED === '1' || process.env.SHIFT_ENABLED === 'true',
+        start: process.env.SHIFT_START || '00:00',
+        end: process.env.SHIFT_END || '12:00',
+        timezone: process.env.SHIFT_TIMEZONE || process.env.TIMEZONE || 'Africa/Harare',
+        allowOwner: process.env.SHIFT_ALLOW_OWNER !== '0',
+    },
+
+    sharedQuota: {
+        enabled: process.env.SHARED_QUOTA !== '0',
+        url: process.env.QUOTA_BACKEND_URL || process.env.MEDIA_BACKEND_URL || 'http://92.118.206.4:30102',
+        token: process.env.QUOTA_API_TOKEN || process.env.MEDIA_BACKEND_TOKEN || '',
+    },
+
     // Dedicated media download backend (Instagram/Pinterest/TikTok/Facebook
     // + generic songs/videos via jailbreakdl).
     // Live backend: Orihost VPS (PO-token stack, YouTube-safe IP). Render

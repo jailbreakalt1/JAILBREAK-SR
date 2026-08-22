@@ -2,6 +2,8 @@ const moment = require('moment-timezone');
 const fs = require('fs');
 const path = require('path');
 const { buildStatusCard } = require('./style');
+const axios = require('axios');
+const config = require('../config');
 
 const FILE = path.join(__dirname, '..', 'database', 'dailyQuota.json');
 const DEFAULT_LIMIT = 10;
@@ -47,7 +49,7 @@ function normalizeArtistName(name) {
         .toLowerCase();
 }
 
-function getQuota(jid) {
+function localGetQuota(jid) {
     const p = phone(jid);
     if (!p) return { used: 0, total: DEFAULT_LIMIT, remaining: DEFAULT_LIMIT, allowed: true };
     const entry = ensureEntry(jid);
@@ -57,9 +59,9 @@ function getQuota(jid) {
     return { used: entry.used, total: DEFAULT_LIMIT, remaining, allowed: remaining > 0 };
 }
 
-function useQuota(jid) {
+function localUseQuota(jid) {
     const p = phone(jid);
-    if (!p) return getQuota(jid);
+    if (!p) return localGetQuota(jid);
     pending.set(p, (pending.get(p) || 0) + 1);
     try {
         const data = readAll();
@@ -74,7 +76,39 @@ function useQuota(jid) {
         if (c <= 0) pending.delete(p);
         else pending.set(p, c);
     }
-    return getQuota(jid);
+    return localGetQuota(jid);
+}
+
+function sharedEnabled() {
+    return Boolean(config.sharedQuota?.enabled && config.sharedQuota.url && config.sharedQuota.token);
+}
+
+async function sharedRequest(action, jid, command) {
+    const response = await axios.post(`${config.sharedQuota.url}/api/quota/${action}`, {
+        user: phone(jid), command: command || 'general',
+    }, {
+        timeout: 5000,
+        headers: { Authorization: `Bearer ${config.sharedQuota.token}` },
+        validateStatus: () => true,
+    });
+    if (response.status !== 200 || !response.data?.total) throw new Error(`shared quota ${response.status}`);
+    return response.data;
+}
+
+async function getQuota(jid, command = 'general') {
+    if (sharedEnabled()) {
+        try { return await sharedRequest('check', jid, command); }
+        catch (err) { console.warn('[quota] shared check unavailable; using local quota:', err.message); }
+    }
+    return localGetQuota(jid);
+}
+
+async function useQuota(jid, command = 'general') {
+    if (sharedEnabled()) {
+        try { return await sharedRequest('consume', jid, command); }
+        catch (err) { console.warn('[quota] shared consume unavailable; using local quota:', err.message); }
+    }
+    return localUseQuota(jid);
 }
 
 function recordArtist(jid, artistName) {
@@ -116,8 +150,8 @@ function buildArtistLine(jid) {
     return `Your artists of the day were:\n${listed}`;
 }
 
-function buildLimitMessage({ jid, pushName, senderNum, subject = 'songs' }) {
-  const q = getQuota(jid);
+function buildLimitMessage({ jid, pushName, senderNum, subject = 'songs', quota: currentQuota }) {
+  const q = currentQuota || localGetQuota(jid);
   const artistsLine = subject === 'songs' ? buildArtistLine(jid) : '';
   const lines = [];
   if (artistsLine) lines.push(artistsLine);

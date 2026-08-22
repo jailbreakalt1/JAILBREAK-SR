@@ -56,13 +56,13 @@ module.exports = {
         const sender = msg.key.participant || msg.key.remoteJid;
         const senderJid = toPhoneJid(sender);
         const senderNum = cleanNumber(senderJid);
-        const q = quota.getQuota(sender);
+        const q = await quota.getQuota(sender, 'video');
         if (!q.allowed) {
           const limitMsg = quota.buildLimitMessage({
             jid: sender,
             pushName: extra.pushName || '',
             senderNum,
-            subject: 'videos',
+            subject: 'videos', quota: q,
           });
           await sock.sendMessage(msg.key.remoteJid, { text: limitMsg.text }, { quoted: msg });
           return { ok: false, reason: 'quota_exhausted', message: `Daily request limit ${q.used}/${q.total} reached — told the user.` };
@@ -180,7 +180,7 @@ const sources = [
         }
         if (!videoData || !finalPath) throw new Error('All video sources failed.');
 
-        const q2 = quota.useQuota(sender);
+        const q2 = await quota.useQuota(sender, 'video');
         const title = videoData.title || pickedTitle || 'Video';
         const safeName = String(title).replace(/[^\w\s-]/g, '').trim() || 'video';
         const captionText = buildJailbreakCaption({

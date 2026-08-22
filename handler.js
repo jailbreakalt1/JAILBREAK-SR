@@ -13,6 +13,7 @@ const imgCommand = require('./cmd/fix-img');
 const buttonContext = require('./tools/buttonContext');
 const { buildStatusCard } = require('./tools/style');
 const { getMode } = require('./tools/modeManager');
+const shiftGate = require('./tools/shiftGate');
 
 const badWords = [
   'fuck', 'fck', 'fuk', 'fvck', 'shit', 'sh1t', 'ass', 'azz', 'arse',
@@ -467,6 +468,11 @@ async function handleMessage(sock, msg) {
 
     const isGroup = from.endsWith('@g.us');
     const isOwnerUser = isOwner(sender, pushName);
+
+    if (!shiftGate.isActive(commandName, isOwnerUser)) {
+      console.log(chalk.gray('  ⧈ ') + chalk.cyan('SHIFT') + chalk.gray(' ── ') + chalk.white(commandName) + chalk.yellow(' ignored outside active hours'));
+      return;
+    }
 
     if (isGroup) {
       const allowedCommands = database.getAllowedCommandsForGroup(from);

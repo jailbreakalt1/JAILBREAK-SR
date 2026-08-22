@@ -72,13 +72,13 @@ module.exports = {
 
     const sender = msg.key.participant || from;
     const senderNum = (sender || '').split('@')[0];
-    const q = quota.getQuota(sender);
+    const q = await quota.getQuota(sender, 'find');
     if (!q.allowed) {
       const limitMsg = quota.buildLimitMessage({
         jid: sender,
         pushName: extra.pushName || '',
         senderNum,
-        subject: 'songs',
+        subject: 'songs', quota: q,
       });
       await sock.sendMessage(from, { text: limitMsg.text }, { quoted: msg });
       return;
@@ -123,7 +123,7 @@ module.exports = {
         quietFailure: true,
       });
       if (sent) {
-        quota.useQuota(sender);
+        await quota.useQuota(sender, 'find');
         if (typeof extra.react === 'function') await extra.react('✅');
         return;
       }
@@ -188,7 +188,7 @@ module.exports = {
         }, { quoted: msg });
       }
 
-      quota.useQuota(sender);
+      await quota.useQuota(sender, 'find');
 
       if (typeof extra.react === 'function') await extra.react('✅');
     } catch (error) {
