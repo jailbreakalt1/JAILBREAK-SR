@@ -72,7 +72,7 @@ module.exports = {
 
     const sender = msg.key.participant || from;
     const senderNum = (sender || '').split('@')[0];
-    const q = await quota.getQuota(sender, 'find');
+    const q = await quota.getQuota(sender, 'daily');
     if (!q.allowed) {
       const limitMsg = quota.buildLimitMessage({
         jid: sender,
@@ -123,7 +123,7 @@ module.exports = {
         quietFailure: true,
       });
       if (sent) {
-        await quota.useQuota(sender, 'find');
+        await quota.useQuota(sender, 'daily');
         if (typeof extra.react === 'function') await extra.react('✅');
         return;
       }
@@ -188,7 +188,7 @@ module.exports = {
         }, { quoted: msg });
       }
 
-      await quota.useQuota(sender, 'find');
+      await quota.useQuota(sender, 'daily');
 
       if (typeof extra.react === 'function') await extra.react('✅');
     } catch (error) {

@@ -120,7 +120,7 @@ const sendSongCore = async (sock, msg, query, extra = {}) => {
     if (typeof extra.react === 'function') await extra.react('🔥');
 
     if (!extra.skipQuota && !isDM) {
-      const q = await quota.getQuota(sender, 'song');
+      const q = await quota.getQuota(sender, 'daily');
       if (!q.allowed) {
         const senderNum = (sender || '').split('@')[0];
         const limitMsg = quota.buildLimitMessage({
@@ -187,7 +187,7 @@ const sendSongCore = async (sock, msg, query, extra = {}) => {
     if (isDM || extra.skipQuota) {
       q2 = { used: 0, total: Infinity };
     } else {
-      q2 = await quota.useQuota(sender, 'song');
+      q2 = await quota.useQuota(sender, 'daily');
       quota.recordArtist(sender, song.author);
     }
 

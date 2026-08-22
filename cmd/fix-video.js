@@ -56,7 +56,7 @@ module.exports = {
         const sender = msg.key.participant || msg.key.remoteJid;
         const senderJid = toPhoneJid(sender);
         const senderNum = cleanNumber(senderJid);
-        const q = await quota.getQuota(sender, 'video');
+        const q = await quota.getQuota(sender, 'daily');
         if (!q.allowed) {
           const limitMsg = quota.buildLimitMessage({
             jid: sender,
@@ -180,7 +180,7 @@ const sources = [
         }
         if (!videoData || !finalPath) throw new Error('All video sources failed.');
 
-        const q2 = await quota.useQuota(sender, 'video');
+        const q2 = await quota.useQuota(sender, 'daily');
         const title = videoData.title || pickedTitle || 'Video';
         const safeName = String(title).replace(/[^\w\s-]/g, '').trim() || 'video';
         const captionText = buildJailbreakCaption({
