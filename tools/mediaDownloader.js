@@ -35,6 +35,11 @@ function backendBase() {
   return (config.mediaBackend && config.mediaBackend.url) || 'https://jailbreakdl.onrender.com';
 }
 
+function backendHeaders() {
+  const token = config.mediaBackend && config.mediaBackend.token;
+  return token ? { Authorization: `Bearer ${token}` } : {};
+}
+
 function imageBackendBase() {
   return (config.imageBackend && config.imageBackend.url) || 'https://jailbreakdl.onrender.com';
 }
