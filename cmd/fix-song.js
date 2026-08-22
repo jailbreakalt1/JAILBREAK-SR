@@ -119,7 +119,7 @@ const sendSongCore = async (sock, msg, query, extra = {}) => {
   try {
     if (typeof extra.react === 'function') await extra.react('🔥');
 
-    if (!extra.skipQuota && !isDM) {
+    if (!extra.skipQuota && !extra.skipQuotaCheck && !isDM) {
       const q = await quota.getQuota(sender, 'daily');
       if (!q.allowed) {
         const senderNum = (sender || '').split('@')[0];

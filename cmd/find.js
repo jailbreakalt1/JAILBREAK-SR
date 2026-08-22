@@ -119,11 +119,12 @@ module.exports = {
 
       const sent = await songCommand.sendSong(sock, msg, query, {
         ...extra,
-        skipQuota: true,
+        // The find command already performed the availability check above;
+        // let sendSong consume/report the quota exactly once after delivery.
+        skipQuotaCheck: true,
         quietFailure: true,
       });
       if (sent) {
-        await quota.useQuota(sender, 'daily');
         if (typeof extra.react === 'function') await extra.react('✅');
         return;
       }
