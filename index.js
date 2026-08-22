@@ -2,6 +2,22 @@ process.env.PUPPETEER_SKIP_DOWNLOAD = 'true';
 process.env.PUPPETEER_SKIP_CHROMIUM_DOWNLOAD = 'true';
 process.env.PUPPETEER_CACHE_DIR = process.env.PUPPETEER_CACHE_DIR || '/tmp/puppeteer_cache_disabled';
 
+// Load the ignored container-local env file before config.js is imported.
+// Existing panel-provided environment variables take precedence.
+const startupEnvPath = require('path').join(process.cwd(), '.env');
+try {
+  const startupEnv = require('fs').readFileSync(startupEnvPath, 'utf8');
+  for (const line of startupEnv.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith('#')) continue;
+    const match = trimmed.match(/^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/);
+    if (!match || process.env[match[1]] !== undefined) continue;
+    process.env[match[1]] = match[2].replace(/^(['"])(.*)\1$/, '$2');
+  }
+} catch {
+  // .env is optional when running locally or through a panel environment.
+}
+
 const { initializeTempSystem } = require('./tools/tempManager');
 const { startCleanup } = require('./tools/cleanup');
 initializeTempSystem();
