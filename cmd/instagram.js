@@ -6,12 +6,14 @@ const { getInstagram, sendMediaMessage } = require('../tools/mediaDownloader');
 const processedMessages = new Set();
 
 const INSTAGRAM_PATTERNS = [
-  /https?:\/\/(?:www\.)?instagram\.com\//,
-  /https?:\/\/(?:www\.)?instagr\.am\//,
-  /https?:\/\/(?:www\.)?instagram\.com\/p\//,
-  /https?:\/\/(?:www\.)?instagram\.com\/reel\//,
-  /https?:\/\/(?:www\.)?instagram\.com\/tv\//,
+  /https?:\/\/(?:www\.)?instagram\.com\/(?:p|reel|reels|tv|share\/reel)\/[^\s<>'"]+/i,
+  /https?:\/\/(?:www\.)?instagr\.am\/(?:p|reel|reels|tv)\/[^\s<>'"]+/i,
 ];
+
+function extractInstagramUrl(text) {
+  const match = String(text || '').match(/https?:\/\/(?:www\.)?(?:instagram\.com|instagr\.am)\/(?:p|reel|reels|tv|share\/reel)\/[^\s<>'"]+/i);
+  return match?.[0]?.replace(/[),.!?]+$/, '') || null;
+}
 
 module.exports = {
   name: 'instagram',
@@ -48,7 +50,8 @@ module.exports = {
           return { ok: false, reason: 'no_query', message: 'No Instagram link was given — asked the user to provide one.' };
         }
 
-        const isValidUrl = INSTAGRAM_PATTERNS.some(pattern => pattern.test(text));
+        const instagramUrl = extractInstagramUrl(text);
+        const isValidUrl = instagramUrl && INSTAGRAM_PATTERNS.some(pattern => pattern.test(instagramUrl));
 
         if (!isValidUrl) {
           await extra.reply(buildStatusCard({
@@ -64,7 +67,7 @@ module.exports = {
           react: { text: newLocal, key: msg.key }
         });
 
-        const media = await getInstagram(text);
+        const media = await getInstagram(instagramUrl);
         await sendMediaMessage(sock, chatId, media, {
           caption: buildCard({
             title: 'INSTAGRAM DOWNLOADED',
