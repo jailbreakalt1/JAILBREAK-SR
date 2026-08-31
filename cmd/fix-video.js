@@ -1,19 +1,19 @@
 /**
- * Video Downloader - Download video from YouTube
+ * Video Downloader - Download video from YouTube (via Orchestrator)
  */
 
 const yts = require('yt-search');
 const { sendInteractiveMessage } = require('@ryuu-reinzz/button-helper');
 
 const config = require('../config');
+const { orchestratorClient } = require('../tools/orchestratorClient');
 const quota = require('../tools/quota');
 const { cleanNumber, toPhoneJid } = require('../tools/jidCleanser');
 const { buildStatusCard } = require('../tools/style');
 const CHANNEL_URL = 'https://whatsapp.com/channel/0029Vb6zZKpKbYMFqRWgx62q';
 const downloadQueue = require('../tools/downloadQueue');
 const { getLiveState } = require('../tools/liveDetector');
-const { downloadToDisk, getVideo } = require('../tools/mediaDownloader');
-const { createTempFilePath, deleteTempFile, deleteTempFiles } = require('../tools/tempManager');
+const { createTempFilePath, deleteTempFiles } = require('../tools/tempManager');
 const buttonContext = require('../tools/buttonContext');
 
 const buildJailbreakCaption = ({ title, senderNum, botName, emoji }) =>
@@ -27,6 +27,27 @@ const buildJailbreakCaption = ({ title, senderNum, botName, emoji }) =>
 
 const VIDEO_URL_REGEX = /(?:https?:\/\/)?(?:youtu\.be\/|(?:www\.|m\.)?youtube\.com\/(?:watch\?v=|v\/|embed\/|shorts\/))([a-zA-Z0-9_-]{11})/gi;
 const VIDEO_ID_REGEX = /[?&]v=([a-zA-Z0-9_-]{11})|youtu\.be\/([a-zA-Z0-9_-]{11})|shorts\/([a-zA-Z0-9_-]{11})|embed\/([a-zA-Z0-9_-]{11})/;
+
+const pollJobCompletion = async (jobId, maxWaitMs = 300000, pollIntervalMs = 3000) => {
+  const start = Date.now();
+  while (Date.now() - start < maxWaitMs) {
+    await new Promise(r => setTimeout(r, pollIntervalMs));
+    try {
+      const job = await orchestratorClient.getJobStatus(jobId);
+      if (job.status === 'completed' && job.result) {
+        return job.result;
+      }
+      if (job.status === 'failed') {
+        throw new Error(job.error || 'Job failed');
+      }
+    } catch (err) {
+      if (err.status === 404) continue;
+      throw err;
+    }
+  }
+  throw new Error('Job timed out');
+};
+
 module.exports = {
   name: 'ytvideo',
   aliases: ['ytv', 'ytmp4', 'ytvid', 'video'],
@@ -111,12 +132,7 @@ module.exports = {
           candidates = videos.slice(0, 5).map((v) => ({ url: v.url, title: v.title || '' }));
         }
 
-        // Try each candidate video (top 5 search results) × each download
-        // API. A source only counts when its link actually downloads to
-        // disk, and a video that 403s on every source falls through to the
-        // next result instead of failing the whole command.
-        let videoData = null;
-        let pickedTitle = '';
+        // Check live state for candidates
         for (const candidate of candidates) {
           if (!candidate.url.match(VIDEO_URL_REGEX)) continue;
 
@@ -147,42 +163,61 @@ module.exports = {
               continue;
             }
           }
-
-          // Try the fast working provider first, then OriHost jailbreakdl.
-const sources = [
-  () => APIs.getEliteProTechDownloadByUrl(candidate.url, 'mp4'),
-  () => getVideo(candidate.url),
-];
-          for (const method of sources) {
-            try {
-              const data = await method();
-              if (data?.filePath) {
-                finalPath = data.filePath;
-                videoData = { download: data.filePath, title: data.title || candidate.title };
-                pickedTitle = candidate.title;
-                break;
-              }
-              if (!data?.download) continue;
-              finalPath = createTempFilePath('video', 'mp4');
-              await downloadToDisk(data.download, finalPath);
-              videoData = data;
-              pickedTitle = candidate.title;
-              break;
-            } catch (err) {
-              console.warn('[VIDEO] source failed:', err?.message || err);
-              if (finalPath) {
-                try { deleteTempFile(finalPath); } catch (_) {}
-                finalPath = null;
-              }
-            }
-          }
-          if (videoData && finalPath) break;
         }
-        if (!videoData || !finalPath) throw new Error('All video sources failed.');
 
+        // Submit to orchestrator
+        const userId = cleanNumber(toPhoneJid(sender));
+        const jobPayload = {
+          query: searchQuery,
+          videoId: candidates[0]?.url?.match(VIDEO_ID_REGEX)?.[1] || null,
+          youtubeUrls: candidates.map(c => c.url),
+          title: candidates[0]?.title || '',
+          from: chatId,
+          sender,
+          senderNum,
+          pushName: extra.pushName || '',
+          isDM: !chatId.endsWith('@g.us'),
+        };
+
+        if (typeof extra.react === 'function') await extra.react('⏳');
+
+        let job;
+        try {
+          job = await orchestratorClient.submitJob('download-video', jobPayload, userId);
+        } catch (err) {
+          console.warn('[VIDEO] Orchestrator submit failed, falling back to local:', err.message);
+          return executeVideoLocal(sock, msg, args, extra);
+        }
+
+        await sock.sendMessage(chatId, {
+          text: buildStatusCard({
+            title: '☬ VIDEO QUEUED',
+            status: `⏳ Your video is being processed by the Jailbreak network...`,
+            lines: [
+              `Job ID: \`${job.jobId}\``,
+            ],
+          })
+        }, { quoted: msg });
+
+        let result;
+        try {
+          result = await pollJobCompletion(job.jobId);
+        } catch (err) {
+          await sock.sendMessage(chatId, {
+            text: buildStatusCard({
+              title: 'VIDEO DOWNLOAD',
+              status: '❌ Processing timed out or failed',
+              lines: [err.message],
+            })
+          }, { quoted: msg });
+          if (typeof extra.react === 'function') await extra.react('❌');
+          return { ok: false };
+        }
+
+        // Send the downloaded video
+        const { filePath, title, safeName, mimetype, captionData, videoQuery } = result;
         const q2 = await quota.useQuota(sender, 'daily');
-        const title = videoData.title || pickedTitle || 'Video';
-        const safeName = String(title).replace(/[^\w\s-]/g, '').trim() || 'video';
+
         const captionText = buildJailbreakCaption({
           title,
           senderNum,
@@ -190,20 +225,16 @@ const sources = [
           emoji: '🎬',
         }) + `\n_@${senderNum}, used ${q2.used}/${q2.total} today — ${q2.total - q2.used} remaining_`;
 
-        // 1) The media goes out as a plain video message — the same
-        //    proven path songRecommend uses. No interactive fusion.
         await sock.sendMessage(chatId, {
-          video: { url: finalPath },
-          mimetype: 'video/mp4',
+          video: { url: filePath },
+          mimetype,
           fileName: `${safeName}.mp4`,
           caption: captionText,
           mentions: [senderJid],
         }, { quoted: msg, __skipStyle: true });
 
-        // 2) Buttons are a separate follow-up message, sent only after
-        //    the media itself was delivered. The query is remembered so a
-        //    tap that arrives without a proper id can still be resolved.
-        buttonContext.set(chatId, { videoQuery: title });
+        // Buttons follow-up
+        buttonContext.set(chatId, { videoQuery });
         try {
           await sendInteractiveMessage(sock, chatId, {
             text: `🎬 *${title}* delivered to @${senderNum}. \n > Want the audio instead?`,
@@ -237,6 +268,9 @@ const sources = [
 
         if (typeof extra.react === 'function') await extra.react('✅');
 
+        // Cleanup temp file after sending
+        setImmediate(() => deleteTempFiles([filePath]));
+
         return { ok: true };
       } catch (error) {
         console.error('[VIDEO] Command Error:', error?.message || error);
@@ -253,5 +287,174 @@ const sources = [
         if (finalPath) setImmediate(() => deleteTempFiles([finalPath]));
       }
     });
-  }
+  },
 };
+
+// Local fallback (original logic)
+async function executeVideoLocal(sock, msg, args, extra = {}) {
+  const { downloadToDisk, getVideo } = require('../tools/mediaDownloader');
+  const APIs = require('../tools/api');
+  const instanceConfig = typeof config.getConfigFromSocket === 'function'
+    ? config.getConfigFromSocket(sock)
+    : config;
+
+  const sender = msg.key.participant || msg.key.remoteJid;
+  const senderJid = toPhoneJid(sender);
+  const senderNum = cleanNumber(senderJid);
+  const chatId = msg.key.remoteJid;
+  const searchQuery = args.join(' ').trim();
+
+  let finalPath = null;
+
+  try {
+    if (typeof extra.react === 'function') await extra.react('🔥');
+
+    let candidates = [];
+    if (searchQuery.startsWith('http://') || searchQuery.startsWith('https://')) {
+      candidates = [{ url: searchQuery, title: '' }];
+    } else {
+      const { videos } = await yts(searchQuery);
+      if (!videos || videos.length === 0) {
+        return await sock.sendMessage(chatId, {
+          text: buildStatusCard({
+            title: 'VIDEO SEARCH',
+            status: '❌ No videos found.',
+            lines: ['Try a different name or paste a direct link.'],
+          })
+        }, { quoted: msg });
+      }
+      candidates = videos.slice(0, 5).map((v) => ({ url: v.url, title: v.title || '' }));
+    }
+
+    let videoData = null;
+    let pickedTitle = '';
+    for (const candidate of candidates) {
+      if (!candidate.url.match(VIDEO_URL_REGEX)) continue;
+
+      const idMatch = candidate.url.match(VIDEO_ID_REGEX);
+      const videoId = idMatch ? (idMatch[1] || idMatch[2] || idMatch[3] || idMatch[4]) : null;
+
+      if (videoId) {
+        const liveState = await getLiveState(videoId);
+        if (liveState) {
+          if (candidates.length === 1) {
+            if (typeof extra.react === 'function') await extra.react('❌');
+            return await sock.sendMessage(chatId, {
+              text: buildStatusCard({
+                title: 'VIDEO DOWNLOAD',
+                status: liveState === 'live'
+                  ? '❌ Live streams cannot be downloaded'
+                  : '❌ That stream has not started yet',
+                lines: [
+                  liveState === 'live'
+                    ? 'This is a live stream — there\'s no finished video file to grab.'
+                    : 'This is a scheduled stream that hasn\'t aired yet.',
+                  'Try a regular video or paste a different link.',
+                ],
+              })
+            }, { quoted: msg });
+          }
+          console.warn('[VIDEO] skipped live candidate:', candidate.title);
+          continue;
+        }
+      }
+
+      const sources = [
+        () => APIs.getEliteProTechDownloadByUrl(candidate.url, 'mp4'),
+        () => getVideo(candidate.url),
+      ];
+      for (const method of sources) {
+        try {
+          const data = await method();
+          if (data?.filePath) {
+            finalPath = data.filePath;
+            videoData = { download: data.filePath, title: data.title || candidate.title };
+            pickedTitle = candidate.title;
+            break;
+          }
+          if (!data?.download) continue;
+          finalPath = createTempFilePath('video', 'mp4');
+          await downloadToDisk(data.download, finalPath);
+          videoData = data;
+          pickedTitle = candidate.title;
+          break;
+        } catch (err) {
+          console.warn('[VIDEO] source failed:', err?.message || err);
+          if (finalPath) {
+            try { deleteTempFile(finalPath); } catch (_) {}
+            finalPath = null;
+          }
+        }
+      }
+      if (videoData && finalPath) break;
+    }
+    if (!videoData || !finalPath) throw new Error('All video sources failed.');
+
+    const q2 = await quota.useQuota(sender, 'daily');
+    const title = videoData.title || pickedTitle || 'Video';
+    const safeName = String(title).replace(/[^\w\s-]/g, '').trim() || 'video';
+    const captionText = buildJailbreakCaption({
+      title,
+      senderNum,
+      botName: instanceConfig.botName || config.botName || 'JAILBREAK',
+      emoji: '🎬',
+    }) + `\n_@${senderNum}, used ${q2.used}/${q2.total} today — ${q2.total - q2.used} remaining_`;
+
+    await sock.sendMessage(chatId, {
+      video: { url: finalPath },
+      mimetype: 'video/mp4',
+      fileName: `${safeName}.mp4`,
+      caption: captionText,
+      mentions: [senderJid],
+    }, { quoted: msg, __skipStyle: true });
+
+    buttonContext.set(chatId, { videoQuery: title });
+    try {
+      await sendInteractiveMessage(sock, chatId, {
+        text: `🎬 *${title}* delivered to @${senderNum}. \n > Want the audio instead?`,
+        interactiveButtons: [
+          {
+            name: 'quick_reply',
+            buttonParamsJson: JSON.stringify({
+              display_text: '🎵 GET MP3',
+              id: `finddl:${encodeURIComponent(title)}`,
+            }),
+          },
+          {
+            name: 'quick_reply',
+            buttonParamsJson: JSON.stringify({
+              display_text: '📸 FETCH PHOTOS',
+              id: `imgdl:${encodeURIComponent(title)}`,
+            }),
+          },
+          {
+            name: 'cta_url',
+            buttonParamsJson: JSON.stringify({
+              display_text: '▶ JOIN CHANNEL',
+              url: CHANNEL_URL,
+            }),
+          },
+        ],
+      }, { quoted: msg });
+    } catch (error) {
+      console.warn('[VIDEO] follow-up buttons failed:', error?.message || error);
+    }
+
+    if (typeof extra.react === 'function') await extra.react('✅');
+
+    return { ok: true };
+  } catch (error) {
+    console.error('[VIDEO] Command Error:', error?.message || error);
+    if (typeof extra.react === 'function') await extra.react('❌');
+    await sock.sendMessage(chatId, {
+      text: buildStatusCard({
+        title: 'VIDEO ERROR',
+        status: '❌ Download failed.',
+        lines: [error?.message || 'Unknown error'],
+      })
+    }, { quoted: msg });
+    return { ok: false, reason: 'download_failed', message: error?.message || 'Unknown error' };
+  } finally {
+    if (finalPath) setImmediate(() => deleteTempFiles([finalPath]));
+  }
+}

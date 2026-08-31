@@ -11,7 +11,7 @@ const DEFAULT_LIMIT = 10;
 const pending = new Map();
 
 function todayDate() {
-    return moment().tz('Africa/Harare').format('YYYY-MM-DD');
+    return moment().tz(config.timezone || 'Africa/Harare').format('YYYY-MM-DD');
 }
 
 function phone(jid) {
@@ -35,7 +35,7 @@ function ensureEntry(jid) {
     const data = readAll();
     const date = todayDate();
     if (!data[p] || data[p].date !== date) {
-        data[p] = { date, used: 0, artists: [] };
+        data[p] = { date, used: 0 };
         writeAll(data);
     }
     if (!Array.isArray(data[p].artists)) data[p].artists = [];
@@ -79,34 +79,35 @@ function localUseQuota(jid) {
     return localGetQuota(jid);
 }
 
-function sharedEnabled() {
-    return Boolean(config.sharedQuota?.enabled && config.sharedQuota.url && config.sharedQuota.token);
+function orchestratorEnabled() {
+    return Boolean(config.orchestrator?.enabled && config.orchestrator.url && config.orchestrator.token);
 }
 
-async function sharedRequest(action, jid, command) {
-    const response = await axios.post(`${config.sharedQuota.url}/api/quota/${action}`, {
+async function orchestratorRequest(action, jid, command) {
+    const baseUrl = config.orchestrator.url.replace(/\/+$/, '');
+    const response = await axios.post(`${baseUrl}/api/quota/${action}`, {
         user: phone(jid), command: command || 'general',
     }, {
         timeout: 5000,
-        headers: { Authorization: `Bearer ${config.sharedQuota.token}` },
+        headers: { Authorization: `Bearer ${config.orchestrator.token}` },
         validateStatus: () => true,
     });
-    if (response.status !== 200 || !response.data?.total) throw new Error(`shared quota ${response.status}`);
+    if (response.status !== 200 || !response.data?.total) throw new Error(`orchestrator quota ${response.status}`);
     return response.data;
 }
 
 async function getQuota(jid, command = 'general') {
-    if (sharedEnabled()) {
-        try { return await sharedRequest('check', jid, command); }
-        catch (err) { console.warn('[quota] shared check unavailable; using local quota:', err.message); }
+    if (orchestratorEnabled()) {
+        try { return await orchestratorRequest('check', jid, command); }
+        catch (err) { console.warn('[quota] orchestrator check unavailable; using local quota:', err.message); }
     }
     return localGetQuota(jid);
 }
 
 async function useQuota(jid, command = 'general') {
-    if (sharedEnabled()) {
-        try { return await sharedRequest('consume', jid, command); }
-        catch (err) { console.warn('[quota] shared consume unavailable; using local quota:', err.message); }
+    if (orchestratorEnabled()) {
+        try { return await orchestratorRequest('consume', jid, command); }
+        catch (err) { console.warn('[quota] orchestrator consume unavailable; using local quota:', err.message); }
     }
     return localUseQuota(jid);
 }
@@ -134,7 +135,7 @@ function getArtists(jid) {
 }
 
 function timeUntilReset() {
-    const now = moment().tz('Africa/Harare');
+    const now = moment().tz(config.timezone || 'Africa/Harare');
     const midnight = now.clone().startOf('day').add(1, 'day');
     const diff = midnight.diff(now);
     const h = Math.floor(diff / 3600000);

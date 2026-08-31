@@ -22,14 +22,16 @@ const config = {
     autoBio: false,
     mode: process.env.MODE || 'owner',
 
-    shift: {
-        enabled: process.env.SHIFT_ENABLED === '1' || process.env.SHIFT_ENABLED === 'true',
-        start: process.env.SHIFT_START || '00:00',
-        end: process.env.SHIFT_END || '12:00',
-        timezone: process.env.SHIFT_TIMEZONE || process.env.TIMEZONE || 'Africa/Harare',
-        allowOwner: process.env.SHIFT_ALLOW_OWNER !== '0',
+    // Jailbreak Orchestrator - distributed job queue for downloads
+    orchestrator: {
+        enabled: process.env.ORCHESTRATOR_ENABLED !== '0',
+        url: process.env.ORCHESTRATOR_URL || 'http://localhost:30202',
+        token: process.env.ORCHESTRATOR_TOKEN || '',
+        workerId: process.env.ORCHESTRATOR_WORKER_ID || '',
+        workerCapacity: parseInt(process.env.ORCHESTRATOR_WORKER_CAPACITY || '1', 10),
     },
 
+    // Legacy shared quota (deprecated - use orchestrator)
     sharedQuota: {
         enabled: process.env.SHARED_QUOTA !== '0',
         url: process.env.QUOTA_BACKEND_URL || process.env.MEDIA_BACKEND_URL || 'http://92.118.206.4:30102',

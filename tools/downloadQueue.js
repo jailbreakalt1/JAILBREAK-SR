@@ -1,4 +1,7 @@
-const MAX_CONCURRENCY = 2;
+const configuredConcurrency = Number.parseInt(process.env.DOWNLOAD_CONCURRENCY || '6', 10);
+const MAX_CONCURRENCY = Number.isInteger(configuredConcurrency)
+  ? Math.min(Math.max(configuredConcurrency, 1), 6)
+  : 6;
 
 let running = 0;
 const pending = [];
