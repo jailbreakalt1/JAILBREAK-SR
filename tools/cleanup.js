@@ -9,11 +9,11 @@ const { getTempDir } = require('./tempManager');
 const config = require('../config');
 const chalk = require('chalk');
 
-// Cleanup interval: 10 minutes
-const CLEANUP_INTERVAL_MS = 10 * 60 * 1000;
+// Cleanup interval: 2 minutes
+const CLEANUP_INTERVAL_MS = 2 * 60 * 1000;
 
-// File age threshold: 30 minutes
-const FILE_AGE_THRESHOLD_MS = 30 * 60 * 1000;
+// File age threshold: 8 minutes
+const FILE_AGE_THRESHOLD_MS = 8 * 60 * 1000;
 
 // Session directory name (must NOT be cleaned)
 const SESSION_DIR_NAME = config.sessionName || 'session';
