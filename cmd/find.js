@@ -3,7 +3,6 @@ const yts = require('yt-search');
 const { downloadMediaMessage } = require('@whiskeysockets/baileys');
 const { sendInteractiveMessage } = require('@ryuu-reinzz/button-helper');
 const songCommand = require('./fix-song');
-const quota = require('../tools/quota');
 const { buildCard, buildStatusCard } = require('../tools/style');
 const downloadQueue = require('../tools/downloadQueue');
 
@@ -72,17 +71,6 @@ module.exports = {
 
     const sender = msg.key.participant || from;
     const senderNum = (sender || '').split('@')[0];
-    const q = await quota.getQuota(sender, 'daily');
-    if (!q.allowed) {
-      const limitMsg = quota.buildLimitMessage({
-        jid: sender,
-        pushName: extra.pushName || '',
-        senderNum,
-        subject: 'songs', quota: q,
-      });
-      await sock.sendMessage(from, { text: limitMsg.text }, { quoted: msg });
-      return;
-    }
 
     try {
       if (typeof extra.react === 'function') await extra.react('🔎');
@@ -119,9 +107,6 @@ module.exports = {
 
       const sent = await songCommand.sendSong(sock, msg, query, {
         ...extra,
-        // The find command already performed the availability check above;
-        // let sendSong consume/report the quota exactly once after delivery.
-        skipQuotaCheck: true,
         quietFailure: true,
       });
       if (sent) {
@@ -188,8 +173,6 @@ module.exports = {
           text: `${responseText}\nDownload: \`.song ${query}\``
         }, { quoted: msg });
       }
-
-      await quota.useQuota(sender, 'daily');
 
       if (typeof extra.react === 'function') await extra.react('✅');
     } catch (error) {

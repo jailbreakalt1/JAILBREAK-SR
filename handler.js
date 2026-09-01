@@ -6,7 +6,6 @@ const chalk = require('chalk');
 const { normalizeMessageContent } = require('@whiskeysockets/baileys');
 const { cleanNumber, resolvePhoneJid, getOwnPhoneJid } = require('./tools/jidCleanser');
 const songRecommend = require('./tools/songRecommend');
-const quota = require('./tools/quota');
 const songCommand = require('./cmd/fix-song');
 const videoCommand = require('./cmd/fix-video');
 const imgCommand = require('./cmd/fix-img');
@@ -223,8 +222,6 @@ async function handleFindDownloadTap(sock, msg, from, sender, senderNum, tapId) 
       console.log(chalk.gray('  ⧈ ') + chalk.cyan('MODE') + chalk.gray(' ── ') + chalk.white(senderNum) + chalk.red(' OWNER-ONLY BUTTON TAP'));
       return sock.sendMessage(from, { text: '⫎ Bot is in *Owner mode* — only the bot owner can use commands in DM.' }, { quoted: msg });
     }
-  } else {
-    // Group quota gate runs inside fix-song.js (skipQuota stays false).
   }
 
   console.log(chalk.gray('  ⧈ ') + chalk.cyan('BUTTON') + chalk.gray(' ── ') + chalk.white(senderNum) + chalk.yellow(' FIND-DOWNLOAD ') + chalk.white(query));

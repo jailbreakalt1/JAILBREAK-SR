@@ -22,20 +22,14 @@ const config = {
     autoBio: false,
     mode: process.env.MODE || 'owner',
 
-    // Jailbreak Orchestrator - distributed job queue for downloads
-    orchestrator: {
-        enabled: process.env.ORCHESTRATOR_ENABLED !== '0',
-        url: process.env.ORCHESTRATOR_URL || 'http://localhost:30202',
-        token: process.env.ORCHESTRATOR_TOKEN || '',
-        workerId: process.env.ORCHESTRATOR_WORKER_ID || '',
-        workerCapacity: parseInt(process.env.ORCHESTRATOR_WORKER_CAPACITY || '1', 10),
-    },
-
-    // Legacy shared quota (deprecated - use orchestrator)
-    sharedQuota: {
-        enabled: process.env.SHARED_QUOTA !== '0',
-        url: process.env.QUOTA_BACKEND_URL || process.env.MEDIA_BACKEND_URL || 'http://92.118.206.4:30102',
-        token: process.env.QUOTA_API_TOKEN || process.env.MEDIA_BACKEND_TOKEN || '',
+    // Shift rotation — 3 bots take turns serving, 1 hour each.
+    // active when (currentHour % shiftCycleHours) === slot.
+    // slot 0: 00:00, 03:00, 06:00 ... slot 1: 01:00, 04:00 ... slot 2: 02:00, 05:00 ...
+    shift: {
+        slot: parseInt(process.env.SHIFT_SLOT || '0', 10),
+        cycleHours: parseInt(process.env.SHIFT_CYCLE_HOURS || '3', 10),
+        timezone: process.env.SHIFT_TIMEZONE || process.env.TIMEZONE || 'Africa/Harare',
+        allowOwner: process.env.SHIFT_ALLOW_OWNER !== '0',
     },
 
     // Dedicated media download backend (Instagram/Pinterest/TikTok/Facebook
