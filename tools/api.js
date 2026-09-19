@@ -140,6 +140,17 @@ async function fetchSocialItem(url) {
   return { buffer: Buffer.from(res.data), mimetype: String(res.headers['content-type'] || '') };
 }
 
+async function searchBackendImages(query, count = 4) {
+  const res = await axios.get(`${BACKEND_BASE_URL}/api/img/search`, {
+    params: { q: query, count },
+    timeout: 30000,
+    validateStatus: (s) => s < 500,
+  });
+  if (res.status !== 200) throw new Error('image search failed');
+  const images = res.data?.images;
+  return Array.isArray(images) ? images.slice(0, count) : [];
+}
+
 // API Endpoints
 const APIs = {
   // Image Generation
@@ -574,3 +585,4 @@ module.exports.getBackendMediaByUrl = getBackendMediaByUrl;
 module.exports.detectSocialUrl = detectSocialUrl;
 module.exports.getBackendSocialManifest = getBackendSocialManifest;
 module.exports.fetchSocialItem = fetchSocialItem;
+module.exports.searchBackendImages = searchBackendImages;

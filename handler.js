@@ -13,6 +13,7 @@ const checkIn    = require('./brain/checkIn');
 const tts        = require('./brain/tts');
 const quota      = require('./tools/quota');
 const apiTools   = require('./tools/api');
+const buttonContext = require('./tools/buttonContext');
 const songRecommend = require('./brain/songRecommend');
 const toolRunner = require('./brain/toolRunner');
 
@@ -335,6 +336,136 @@ async function handleSocialDownload(sock, msg, { from, url }) {
   }
 }
 
+// ── Interactive button taps (native flow + clients that deliver label-only) ──
+// A .find identify card sends quick_reply buttons carrying callbacks like
+// `finddl:<query>`. Taps arrive as nativeFlowResponseMessage (paramsJson with
+// id/display_text) or, on some clients, templateButtonReplyMessage /
+// buttonsResponseMessage — which may only include the display label. In that
+// case we match the label and pull the query from buttonContext.
+
+const BUTTON_LABEL_PREFIXES = {
+  '⬇ DOWNLOAD SONG': 'finddl:',
+  '🎬 FETCH VIDEO':   'viddl:',
+  '📸 FETCH PHOTOS':  'imgdl:',
+};
+
+function extractButtonTap(msg, body, from) {
+  const raw = msg.message || {};
+  const nativeFlow = raw.interactiveResponseMessage?.nativeFlowResponseMessage;
+  const templateReply = raw.templateButtonReplyMessage;
+  const buttonsReply = raw.buttonsResponseMessage;
+  const motionTap = raw.interactiveResponseMessage?.motionResponseMessage;
+  const hasTapShape = !!(nativeFlow || templateReply || buttonsReply || motionTap);
+
+  let tapId = '';
+  let tapLabel = '';
+  if (nativeFlow?.paramsJson) {
+    try {
+      const p = JSON.parse(nativeFlow.paramsJson);
+      tapId = typeof p.id === 'string' ? p.id : '';
+      tapLabel = typeof p.display_text === 'string' ? p.display_text : '';
+    } catch (_) {}
+  }
+  if (!tapId) tapId = templateReply?.selectedId || templateReply?.id || '';
+  if (!tapId) tapId = buttonsReply?.selectedButtonId || buttonsReply?.selectedId || '';
+  if (!tapId && motionTap?.id) tapId = motionTap.id;
+  tapLabel = tapLabel || templateReply?.selectedDisplayText || buttonsReply?.selectedDisplayText || '';
+
+  if (!tapId && hasTapShape) {
+    const prefix = BUTTON_LABEL_PREFIXES[tapLabel || body];
+    if (prefix) {
+      const ctx = buttonContext.get(from);
+      tapId = prefix + encodeURIComponent(ctx?.videoQuery || '');
+    }
+  }
+
+  if (!tapId && hasTapShape) {
+    const rawShape = nativeFlow || templateReply || buttonsReply || motionTap || {};
+    console.log(chalk.gray('  ⧈ ') + chalk.cyan('BUTTON') + chalk.gray(' ── ') + chalk.red('UNHANDLED TAP ') + chalk.gray(JSON.stringify(rawShape).slice(0, 160)));
+    return { id: '' };
+  }
+
+  return tapId ? { id: tapId, label: tapLabel, hasTapShape } : null;
+}
+
+function makeTapExtra(sock, from, sender, msg) {
+  return {
+    from,
+    sender,
+    pushName: '',
+    react: async (emoji) => {
+      try {
+        await sock.sendMessage(from, { react: { text: emoji, key: msg?.key } });
+      } catch (_) {}
+    },
+  };
+}
+
+async function handleFindDownloadTap(sock, msg, from, sender, senderNum, tapId) {
+  const query = decodeURIComponent(tapId.slice('finddl:'.length));
+  console.log(chalk.gray('  ⧈ ') + chalk.cyan('BUTTON') + chalk.gray(' ── ') + chalk.white(senderNum) + chalk.yellow(' FIND-DL ') + chalk.white(query));
+  try {
+    const songCmd = commands.get('song');
+    if (!songCmd) return;
+    await songCmd.execute(sock, msg, [query], makeTapExtra(sock, from, sender, msg));
+  } catch (err) {
+    console.error('[BUTTON] song tap failed:', err?.message || err);
+    await sock.sendMessage(from, { text: '❌ Button download failed. Try `.song ' + query + '` directly.' }, { quoted: msg }).catch(() => {});
+  }
+}
+
+async function handleFindVideoTap(sock, msg, from, sender, senderNum, tapId) {
+  const query = decodeURIComponent(tapId.slice('viddl:'.length));
+  console.log(chalk.gray('  ⧈ ') + chalk.cyan('BUTTON') + chalk.gray(' ── ') + chalk.white(senderNum) + chalk.yellow(' FIND-VID ') + chalk.white(query));
+  try {
+    const videoCmd = commands.get('ytvideo');
+    if (!videoCmd) return;
+    await videoCmd.execute(sock, msg, [query], makeTapExtra(sock, from, sender, msg));
+  } catch (err) {
+    console.error('[BUTTON] video tap failed:', err?.message || err);
+    await sock.sendMessage(from, { text: '❌ Button video fetch failed. Try `.video ' + query + '` directly.' }, { quoted: msg }).catch(() => {});
+  }
+}
+
+async function handleFindImageTap(sock, msg, from, sender, senderNum, tapId) {
+  const query = decodeURIComponent(tapId.slice('imgdl:'.length));
+  console.log(chalk.gray('  ⧈ ') + chalk.cyan('BUTTON') + chalk.gray(' ── ') + chalk.white(senderNum) + chalk.yellow(' FIND-IMG ') + chalk.white(query));
+  try {
+    await sock.sendPresenceUpdate('composing', from).catch(() => {});
+    const urls = await apiTools.searchBackendImages(query, 4);
+    await sock.sendPresenceUpdate('paused', from).catch(() => {});
+
+    if (!urls.length) {
+      await sock.sendMessage(from, { text: '📸 No photos found for that artist.' }, { quoted: msg });
+      return;
+    }
+
+    let sent = 0;
+    for (const url of urls) {
+      try {
+        const { buffer, mimetype } = await apiTools.fetchSocialItem(url);
+        if (!buffer?.length) continue;
+        await sock.sendMessage(from, {
+          image: buffer,
+          mimetype: mimetype || 'image/jpeg',
+          caption: `*${query.toUpperCase()}* — JAILBREAK-SR`,
+        }, { quoted: msg });
+        sent++;
+      } catch (itemErr) {
+        console.error('[BUTTON img item]', itemErr?.message || itemErr);
+      }
+      if (sent < 4) await new Promise((r) => setTimeout(r, 700));
+    }
+
+    if (!sent) {
+      await sock.sendMessage(from, { text: '❌ Found photos but failed to send them. Try `.img ' + query + '` directly.' }, { quoted: msg });
+    }
+  } catch (err) {
+    console.error('[BUTTON] image tap failed:', err?.message || err);
+    await sock.sendMessage(from, { text: '❌ Artist photos failed. Try again later.' }, { quoted: msg }).catch(() => {});
+  }
+}
+
 // ── Main message handler ──────────────────────────────────────────────────────
 
 async function handleMessage(sock, msg) {
@@ -361,6 +492,18 @@ async function handleMessage(sock, msg) {
       '';
 
     const pushName = msg.pushName || '';
+
+    // ── Interactive button taps (from .find cards) ─────────────────────────
+    const tap = extractButtonTap(msg, body, from);
+    if (tap) {
+      if (!tap.id) return; // observed a tap shape but couldn't resolve it
+      console.log(chalk.gray('  ⧈ ') + chalk.cyan('TAP') + chalk.gray(' ── ') + chalk.gray(' ') + chalk.yellowBright(tap.id.slice(0, 40)));
+      if (tap.id.startsWith('finddl:')) { await handleFindDownloadTap(sock, msg, from, sender, senderNum, tap.id); return; }
+      if (tap.id.startsWith('viddl:'))  { await handleFindVideoTap(sock, msg, from, sender, senderNum, tap.id); return; }
+      if (tap.id.startsWith('imgdl:'))  { await handleFindImageTap(sock, msg, from, sender, senderNum, tap.id); return; }
+      console.log(chalk.gray('  ⧈ ') + chalk.cyan('TAP') + chalk.gray(' ── ') + chalk.white(senderNum) + chalk.red(' UNHANDLED ') + chalk.gray(tap.id.slice(0, 40)));
+      return;
+    }
 
     if (!body.startsWith(config.prefix)) {
       // ── Auto-shazam: bare video OR audio in a DM → identify, brain reacts, auto-send ─

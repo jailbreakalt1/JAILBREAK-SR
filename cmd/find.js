@@ -10,6 +10,8 @@ const RETRY_DELAY_MS = 2500;
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 const quota = require('../tools/quota');
+const buttonContext = require('../tools/buttonContext');
+const { sendInteractiveButtons } = require('../tools/buttonBuilder');
 
 const acr = new ACRCloud({
   host: process.env.ACRCLOUD_HOST || 'identify-us-west-2.acrcloud.com',
@@ -215,9 +217,36 @@ module.exports = {
 
  ☬ *JAILBREAK HUB* ☬`;
 
-      await sock.sendMessage(from, {
-        text: `${responseText}\n\n*Copy:* \`${artists} - ${title}\`\n_@${senderNum}, you've used ${q2.used}/${q2.total} today — ${q2.total - q2.used} remaining_`
-      }, { quoted: msg });
+      const footer = `*Copy:* \`${artists} - ${title}\`\n_@${senderNum}, you've used ${q2.used}/${q2.total} today — ${q2.total - q2.used} remaining_`;
+
+      // Keep the query per chat so taps that only deliver the label (buttons
+      // with no id) can still be resolved back to a real query.
+      buttonContext.set(from, { videoQuery: query });
+
+      let buttonsSent = false;
+      try {
+        await sendInteractiveButtons(sock, from, {
+          headerTitle: `${artists} - ${title}`,
+          headerSubtitle: 'JAILBREAK-SR BRINGS YOU',
+          bodyText: responseText,
+          footerText: footer,
+          thumbnail: thumbnail || FALLBACK_THUMBNAIL,
+          buttons: [
+            { name: 'quick_reply', displayText: '⬇ DOWNLOAD SONG', id: `finddl:${encodeURIComponent(query)}` },
+            { name: 'quick_reply', displayText: '🎬 FETCH VIDEO',   id: `viddl:${encodeURIComponent(query)}` },
+            { name: 'quick_reply', displayText: '📸 FETCH PHOTOS',  id: `imgdl:${encodeURIComponent(query)}` },
+          ],
+        }, { quoted: msg });
+        buttonsSent = true;
+      } catch (err) {
+        console.warn('[FIND] interactive send failed, falling back to plain text:', err?.message || err);
+      }
+
+      if (!buttonsSent) {
+        await sock.sendMessage(from, {
+          text: `${responseText}\n\n${footer}\n\nDownload: \`.song ${query}\``
+        }, { quoted: msg });
+      }
 
       if (typeof extra.react === 'function') await extra.react('✅');
 
