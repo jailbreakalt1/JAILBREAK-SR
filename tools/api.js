@@ -46,6 +46,100 @@ async function getBackendMediaByUrl(youtubeUrl, kind) {
   return { buffer, mimetype, ext };
 }
 
+// ── Social platforms via the vendored Python backend (JAILBREAK-MEDIA-BACKEND) ─
+// Facebook/Instagram/TikTok/Pinterest go through 127.0.0.1:8000
+// (tools/ensureMediaBackend.js auto-boots it). If the Python service is down,
+// we degrade to the Node backend's POST /api/download (yt-dlp only). No hosted
+// shims here anymore.
+const SOCIAL_PATTERNS = [
+  { platform: 'facebook',   re: /https?:\/\/(?:[a-z0-9-]+\.)?(?:facebook\.com|fb\.com|fb\.watch)\/[^\s<>"']+/i },
+  { platform: 'instagram',  re: /https?:\/\/(?:[a-z0-9-]+\.)?(?:instagram\.com|instagr\.am)\/[^\s<>"']+/i },
+  { platform: 'tiktok',    re: /https?:\/\/(?:[a-z0-9-]+\.)?tiktok\.com\/[^\s<>"']+/i },
+  { platform: 'pinterest',  re: /https?:\/\/(?:[a-z0-9-]+\.)?(?:pin\.it|pinterest\.[a-z.]+)\/[^\s<>"']+/i },
+];
+
+const SOCIAL_PATH_EXCLUDES = ['/accounts/', '/login', '/signup', '/direct/', '/explore/', '/search', '/settings', '/sharer', '/share.php', '/plugins', '/events', '/watchparty'];
+
+function detectSocialUrl(text) {
+  if (!text) return null;
+  for (const { platform, re } of SOCIAL_PATTERNS) {
+    const m = text.match(re);
+    if (m) {
+      const url = m[0];
+      const pathPart = url.replace(/^https?:\/\/[^/]+/, '');
+      if (SOCIAL_PATH_EXCLUDES.some((p) => pathPart.startsWith(p))) continue;
+      return { platform, url };
+    }
+  }
+  return null;
+}
+
+async function getBackendSocialManifest(url) {
+  const detected = detectSocialUrl(url);
+  const platform = detected ? detected.platform : null;
+  if (!platform) return null;
+
+  // Primary: vendored Python backend (rich chains: siputzx/imginn/ryzendesu…)
+  try {
+    const headers = config.mediaBackend.token
+      ? { Authorization: `Bearer ${config.mediaBackend.token}` }
+      : {};
+    const res = await axios.get(
+      `${config.mediaBackend.baseUrl}/api/download/${platform}`,
+      {
+        params: { url },
+        headers,
+        timeout: 60000,
+        validateStatus: (s) => s < 500,
+      }
+    );
+    const data = res.data;
+    if (data && data.ok === true && Array.isArray(data.data)) {
+      const items = data.data
+        .filter((it) => it && typeof it.url === 'string' && it.url)
+        .map((it) => ({
+          type: /video/i.test(String(it.type)) ? 'video' : 'image',
+          url: it.url,
+          thumbnail: it.thumbnail,
+        }));
+      if (items.length) {
+        console.log(`[API] python media backend manifest: ${platform} → ${items.length} item(s)`);
+        return { items, source: 'python' };
+      }
+    }
+  } catch (err) {
+    console.warn(`[API] python media backend unavailable (${err.code || err.message}) – trying node backend`);
+  }
+
+  // Degraded: node backend streams a single file (yt-dlp, no third-party).
+  try {
+    const res = await axios.post(
+      `${BACKEND_BASE_URL}/api/download`,
+      { url },
+      { responseType: 'arraybuffer', timeout: 180000, validateStatus: (s) => s < 500 }
+    );
+    const ct = String(res.headers['content-type'] || '');
+    if (res.status === 200 && Buffer.byteLength(res.data) > 0) {
+      const type = ct.includes('video') ? 'video' : ct.includes('image') ? 'image' : null;
+      if (type) {
+        console.log(`[API] node backend degraded download: ${platform} → ${type}`);
+        return {
+          items: [{ type, buffer: Buffer.from(res.data), mimetype: ct }],
+          source: 'node',
+        };
+      }
+    }
+  } catch (err) {
+    console.warn(`[API] node backend fallback failed: ${err.code || err.message}`);
+  }
+  return null;
+}
+
+async function fetchSocialItem(url) {
+  const res = await axios.get(url, { responseType: 'arraybuffer', timeout: 60000 });
+  return { buffer: Buffer.from(res.data), mimetype: String(res.headers['content-type'] || '') };
+}
+
 // API Endpoints
 const APIs = {
   // Image Generation
@@ -477,3 +571,6 @@ const APIs = {
 
 module.exports = APIs;
 module.exports.getBackendMediaByUrl = getBackendMediaByUrl;
+module.exports.detectSocialUrl = detectSocialUrl;
+module.exports.getBackendSocialManifest = getBackendSocialManifest;
+module.exports.fetchSocialItem = fetchSocialItem;

@@ -1,71 +1,7 @@
 const config = require('../config');
+const apiTools = require('../tools/api');
 
 const processedMessages = new Set();
-
-async function instaDownload(url) {
-  const response = await fetch('https://api.instasave.website/media', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/x-www-form-urlencoded',
-      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-      'Origin': 'https://instasave.website',
-      'Referer': 'https://instasave.website/'
-    },
-    body: 'url=' + encodeURIComponent(url),
-    signal: AbortSignal.timeout(20000)
-  });
-
-  if (!response.ok) {
-    throw new Error('API returned status ' + response.status);
-  }
-
-  const text = await response.text();
-  const tokens = text.match(/https:\/\/cdn\.instasave\.website\/\?token=[a-zA-Z0-9_\-\.]+/g);
-
-  if (!tokens || tokens.length === 0) {
-    throw new Error('No media found in API response');
-  }
-
-  const mediaItems = [];
-
-  for (const token of tokens) {
-    const tokenParam = token.split('?token=')[1];
-    const parts = tokenParam.split('.');
-    if (parts.length < 2) continue;
-
-    let payload = parts[1];
-    payload = payload.replace(/-/g, '+').replace(/_/g, '/');
-    while (payload.length % 4) payload += '=';
-
-    let decoded;
-    try {
-      decoded = JSON.parse(Buffer.from(payload, 'base64').toString('utf8'));
-    } catch {
-      continue;
-    }
-
-    const isVideo = decoded.filename && decoded.filename.endsWith('.mp4');
-
-    if (isVideo || decoded.force === false) {
-      mediaItems.push({
-        url: token,
-        type: isVideo ? 'video' : 'image',
-        thumbnail: !isVideo
-      });
-    }
-  }
-
-  if (mediaItems.length === 0) {
-    throw new Error('No valid media items found');
-  }
-
-  const videoItem = mediaItems.find(m => m.type === 'video');
-  const imageItem = mediaItems.find(m => m.type === 'image');
-
-  return {
-    data: videoItem ? [videoItem, ...(imageItem ? [imageItem] : [])] : mediaItems
-  };
-}
 
 const INSTAGRAM_PATTERNS = [
   /https?:\/\/(?:www\.)?instagram\.com\//,
@@ -118,42 +54,42 @@ module.exports = {
         react: { text: '\uD83D\uDCE5', key: msg.key }
       });
 
-      const downloadData = await instaDownload(text);
+      const manifest = await apiTools.getBackendSocialManifest(text);
 
-      if (!downloadData || !downloadData.data || downloadData.data.length === 0) {
+      if (!manifest || !manifest.items || manifest.items.length === 0) {
         await extra.reply('\u274C No media found at the provided link. The post might be private or the link is invalid.');
         processedMessages.delete(msg.key.id);
         return { ok: false, reason: 'not_found', message: 'No media returned for that link — the post may be private or the link is invalid.' };
       }
 
-      const mediaData = downloadData.data;
-      const mediaToDownload = mediaData.slice(0, 20);
-
-      if (mediaToDownload.length === 0) {
-        await extra.reply('\u274C No valid media found to download. This might be a private post or the scraper failed.');
-        processedMessages.delete(msg.key.id);
-        return { ok: false, reason: 'not_found', message: 'No valid media after dedup/filtering — told the user.' };
-      }
+      const mediaToDownload = manifest.items.slice(0, 20);
 
       let sentCount = 0;
+      const caption = `*DOWNLOADED BY ${config.botName.toUpperCase()}*`;
 
       for (let i = 0; i < mediaToDownload.length; i++) {
         try {
           const media = mediaToDownload[i];
-          const mediaUrl = media.url;
+          let buffer = media.buffer;
+          let mimetype = media.mimetype || (media.type === 'video' ? 'video/mp4' : 'image/jpeg');
 
-          const isVideo = media.type === 'video';
+          if (!buffer) {
+            const fetched = await apiTools.fetchSocialItem(media.url);
+            if (!fetched.buffer.length) continue;
+            buffer = fetched.buffer;
+            mimetype = fetched.mimetype || mimetype;
+          }
 
-          if (isVideo) {
+          if (media.type === 'video') {
             await sock.sendMessage(chatId, {
-              video: { url: mediaUrl },
+              video: buffer,
               mimetype: 'video/mp4',
-              caption: `*DOWNLOADED BY ${config.botName.toUpperCase()}*`
+              caption
             }, { quoted: msg });
           } else {
             await sock.sendMessage(chatId, {
-              image: { url: mediaUrl },
-              caption: `*DOWNLOADED BY ${config.botName.toUpperCase()}*`
+              image: buffer,
+              caption
             }, { quoted: msg });
           }
 

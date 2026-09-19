@@ -34,6 +34,21 @@ export FFMPEG_BINARY=ffmpeg
 # then: npm --prefix downloader-backend start (or just npm start)
 ```
 
+## Social links (Facebook / Instagram / TikTok / Pinterest)
+
+Pasted social links are auto-downloaded (owner-only) — no prefix needed. The
+bot auto-boots the vendored Python service in `JAILBREAK-MEDIA-BACKEND/` on
+`http://127.0.0.1:8000` (first run creates its `.venv` and pip-installs
+`fastapi uvicorn requests yt-dlp`). It runs as its own process alongside the
+Node backend; `GET /api/health` confirms it's up.
+
+- Comes with the clone — nothing extra to download on a blank phone.
+- If Python/pip is missing the bot just logs it (non-fatal) and social links
+  degrade to the Node backend (yt-dlp only) until Python is available.
+- Optional Bearer auth: start the Python service with `MEDIA_BACKEND_TOKEN`
+  set and mirror it in `.env` as `MEDIA_BACKEND_TOKEN`.
+- Explicit command: `.instagram <url>` (`.ig`, `.insta`, `.reels`).
+
 ## Commands
 
 | Command | Aliases | Description |

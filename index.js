@@ -235,6 +235,13 @@ async function startBot() {
   const { ensureLocalBackend } = require('./tools/ensureBackend');
   await ensureLocalBackend();
 
+  // Vendored Python media backend (JAILBREAK-MEDIA-BACKEND) — auto-boot the
+  // uvicorn service on 127.0.0.1:8000 for Facebook/IG/TikTok/Pinterest.
+  // Non-fatal: the bot still boots without Python, and social downloads
+  // degrade to the Node backend until it comes up.
+  const { ensureMediaBackend } = require('./tools/ensureMediaBackend');
+  await ensureMediaBackend();
+
   // Use suppressed logger for socket
   const suppressedLogger = createSuppressedLogger('silent');
 

@@ -30,6 +30,17 @@ const config = {
         baseUrl: (process.env.LOCAL_BACKEND_URL || 'http://127.0.0.1:30102').replace(/\/+$/, ''),
         dir:     process.env.BACKEND_DIR || '',
     },
+    // ── Vendored Python media backend (JAILBREAK-MEDIA-BACKEND) ──────────────
+    // Separate service for Facebook/Instagram/TikTok/Pinterest. Comes with the
+    // repo (JAILBREAK-MEDIA-BACKEND/) but runs as its own process on :8000 —
+    // the bot auto-boots it at start (tools/ensureMediaBackend.js) if it's
+    // down. Bearer only required if you set MEDIA_BACKEND_TOKEN on that side.
+    mediaBackend: {
+        baseUrl: (process.env.MEDIA_BACKEND_URL || 'http://127.0.0.1:8000').replace(/\/+$/, ''),
+        port:    parseInt(process.env.MEDIA_BACKEND_PORT, 10) || 8000,
+        token:   process.env.MEDIA_BACKEND_TOKEN || '',
+        dir:     process.env.MEDIA_BACKEND_DIR || '',
+    },
     autoRead: false,
     autoBio:  false,
 

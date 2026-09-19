@@ -12,6 +12,7 @@ const userProfiles = require('./brain/userProfiles');
 const checkIn    = require('./brain/checkIn');
 const tts        = require('./brain/tts');
 const quota      = require('./tools/quota');
+const apiTools   = require('./tools/api');
 const songRecommend = require('./brain/songRecommend');
 const toolRunner = require('./brain/toolRunner');
 
@@ -94,6 +95,9 @@ setInterval(() => {
   spamTracker.globalHistory = spamTracker.globalHistory.filter(t => now - t < globalWindow);
   for (const [key, ts] of spamTracker.duplicates) {
     if (now - ts > config.spam.duplicateCooldown * 1000) spamTracker.duplicates.delete(key);
+  }
+  for (const [key, ts] of socialSeen) {
+    if (now - ts > 60000) socialSeen.delete(key);
   }
   for (const [user, history] of spamTracker.userHistory) {
     const active = history.filter(t => now - t < config.spam.perUserWindow * 1000);
@@ -270,6 +274,67 @@ async function handleAutoShazam(sock, msg, { from, sender, pushName, commands, m
   }
 }
 
+// ── Social link auto-download (Owner-only) ──────────────────────────────────
+// Facebook / Instagram / TikTok / Pinterest links pasted in chat are detected
+// here (no prefix needed). Media comes from the vendored Python backend on
+// 127.0.0.1:8000 (yt-dlp + its own fallbacks), gracefully degrading to the
+// Node backend's yt-dlp download if :8000 is down.
+const socialSeen = new Map(); // URL → timestamp (dedupe window)
+
+async function handleSocialDownload(sock, msg, { from, url }) {
+  console.log(chalk.gray('  ⧈ ') + chalk.cyan('SOCIAL') + chalk.gray(' ── ') + chalk.white(url.slice(0, 60)));
+
+  try {
+    await sock.sendPresenceUpdate('composing', from).catch(() => {});
+    await sock.sendMessage(from, { react: { text: '📥', key: msg.key } }).catch(() => {});
+
+    const manifest = await apiTools.getBackendSocialManifest(url);
+
+    await sock.sendPresenceUpdate('paused', from).catch(() => {});
+
+    if (!manifest || !manifest.items || !manifest.items.length) {
+      await sock.sendMessage(from, { text: '❌ Could not grab media from that link — it may be private or unsupported. Try later.' }, { quoted: msg });
+      return;
+    }
+
+    const items = manifest.items.slice(0, 10);
+    const caption = `*DOWNLOADED BY ${(config.botName || 'JB').toUpperCase()}*`;
+    let sent = 0;
+
+    for (let i = 0; i < items.length; i++) {
+      const it = items[i];
+      try {
+        let buffer = it.buffer;
+        let mimetype = it.mimetype || (it.type === 'video' ? 'video/mp4' : 'image/jpeg');
+        if (!buffer) {
+          const fetched = await apiTools.fetchSocialItem(it.url);
+          if (!fetched.buffer.length) continue;
+          buffer = fetched.buffer;
+          mimetype = fetched.mimetype || mimetype;
+        }
+
+        if (it.type === 'video') {
+          await sock.sendMessage(from, { video: buffer, mimetype: 'video/mp4', caption }, { quoted: msg });
+        } else {
+          await sock.sendMessage(from, { image: buffer, caption }, { quoted: msg });
+        }
+        sent++;
+      } catch (itemErr) {
+        console.error(chalk.red('[SOCIAL item]'), itemErr.message);
+      }
+      if (i < items.length - 1) await new Promise((r) => setTimeout(r, 800));
+    }
+
+    await sock.sendMessage(from, { react: { text: sent ? '✅' : '❌', key: msg.key } }).catch(() => {});
+    if (!sent) {
+      await sock.sendMessage(from, { text: '❌ Found media but failed to send it. Try again in a bit.' }, { quoted: msg });
+    }
+  } catch (err) {
+    console.error(chalk.red('[SOCIAL]'), err.message);
+    await sock.sendMessage(from, { text: '❌ That link failed to download — try again in a minute.' }, { quoted: msg }).catch(() => {});
+  }
+}
+
 // ── Main message handler ──────────────────────────────────────────────────────
 
 async function handleMessage(sock, msg) {
@@ -384,6 +449,25 @@ async function handleMessage(sock, msg) {
         return;
       }
       // ── End AI Vision ────────────────────────────────────────────────────
+
+      // ── Social link auto-download (FB/IG/TikTok/Pinterest, owner-only) ──
+      const social = apiTools.detectSocialUrl(body);
+      if (social) {
+        if (!isOwner(sender, pushName)) {
+          console.log(chalk.gray('  ⧈ ') + chalk.cyan('SOCIAL') + chalk.gray(' ── ') + chalk.white(senderNum) + chalk.red(' OWNER ONLY DENIED'));
+          await sock.sendMessage(from, { text: config.messages?.ownerOnly || 'You are not allowed to use this.' }, { quoted: msg }).catch(() => {});
+          return;
+        }
+        const now = Date.now();
+        const last = socialSeen.get(social.url) || 0;
+        if (now - last < 60000) {
+          console.log(chalk.gray('  ⧈ ') + chalk.cyan('SOCIAL') + chalk.gray(' ── ') + chalk.yellow(' dedupe skip'));
+          return;
+        }
+        socialSeen.set(social.url, now);
+        await handleSocialDownload(sock, msg, { from, url: social.url });
+        return;
+      }
 
       // ── AI Brain: handle natural-language messages ──────────────────────
       if (!body.trim()) {
