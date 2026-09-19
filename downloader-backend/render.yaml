@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: jailbreakdl
+    runtime: node
+    plan: free
+    buildCommand: ./build.sh
+    startCommand: node scripts/ensure-bins.js && node src/server.js
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: "3000"
+      - key: MAX_MEDIA_SIZE_MB
+        value: "16"

@@ -1,0 +1,25 @@
+{
+  "name": "jailbreakdl",
+  "version": "1.1.0",
+  "description": "Universal media downloader (Pinterest/TikTok/Facebook/Instagram + generic songs/videos) powered by yt-dlp",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node scripts/ensure-bins.js && node scripts/start.js",
+    "dev": "node --watch src/server.js",
+    "test": "node --test src/tests/*.test.js",
+    "update-ytdlp": "python3 -m pip install --break-system-packages -U yt-dlp || pip install -U yt-dlp"
+  },
+  "engines": {
+    "node": ">=22.5"
+  },
+  "dependencies": {
+    "execa": "^9.5.0",
+    "express": "^4.21.0",
+    "express-rate-limit": "^7.4.0",
+    "pino": "^9.5.0",
+    "pino-http": "^10.3.0"
+  },
+  "workspaces": [
+    "pot-server"
+  ]
+}

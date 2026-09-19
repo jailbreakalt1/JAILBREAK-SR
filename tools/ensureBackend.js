@@ -17,6 +17,7 @@ const BACKEND_URL = config.localBackend.baseUrl;
 function resolveBackendDir() {
   if (config.localBackend.dir) return config.localBackend.dir;
   const candidates = [
+    path.join(__dirname, '..', 'downloader-backend'),
     path.join(__dirname, '..', '..', 'downloader-backend'),
     path.join(process.env.HOME || '', 'downloader-backend'),
     path.join(process.env.HOME || '', 'Documents', 'downloader-backend'),

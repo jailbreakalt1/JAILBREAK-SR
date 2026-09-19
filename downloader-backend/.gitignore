@@ -1,0 +1,17 @@
+node_modules/
+temp/
+data/
+bin/*
+!bin/yt-dlp-plugins/
+bin/yt-dlp-plugins/*
+!bin/yt-dlp-plugins/bgutil-ytdlp-pot-provider/
+bin/yt-dlp
+bin/ffmpeg
+*.log
+.env
+.env.*
+!.env.example
+!bin/yt-dlp-plugins/
+pot-server/node_modules/
+cookies*.txt
+workspace/

@@ -48,26 +48,24 @@ const config = {
     },
 
     // ── Weather — OpenWeatherMap ───────────────────────────────────────────────
-    // Get your free key at https://openweathermap.org/api → set OPEN_WEATHER_API in .env
+    // Free key from https://openweathermap.org/api → override via OPEN_WEATHER_API
     weather: {
-        apiKey: process.env.OPEN_WEATHER_API || '',
+        apiKey: process.env.OPEN_WEATHER_API || '4902c0f2550f58298ad4146a92b65e10',
     },
 
 
     // ── Web Search — Firecrawl ────────────────────────────────────────────────
-    // Free tier: 1,000 credits/month, no card needed.
-    // Get your key at https://firecrawl.dev → set FIRECRAWL_API_KEY in .env.
     // Search costs 1 credit per result. At limit:5 → ~200 searches/month free.
-    // Leave apiKey blank to fall back to DuckDuckGo (less reliable).
+    // Override via FIRECRAWL_API_KEY.
     firecrawl: {
-        apiKey: process.env.FIRECRAWL_API_KEY || '',
+        apiKey: process.env.FIRECRAWL_API_KEY || 'fc-7ef376c781ab4b1088b87af3c84120b3',
         limit:  parseInt(process.env.FIRECRAWL_LIMIT, 10) || 5,
     },
-    // Genius API — https://genius.com/api-clients → put the three keys in .env
+    // Genius lyrics — override the three via GENIUS_* env vars.
     genius: {
-        clientAccessToken: process.env.GENIUS_ACCESS_TOKEN || '',
-        clientId:          process.env.GENIUS_CLIENT_ID    || '',
-        clientSecret:      process.env.GENIUS_CLIENT_SECRET || '',
+        clientAccessToken: process.env.GENIUS_ACCESS_TOKEN || 'r_0eyQ2ropDyGqztpRZ_38rnUsO6Zw3LqCi_e7Ch4Ncz6N-ozkTRaF-Siz0kAOur',
+        clientId:          process.env.GENIUS_CLIENT_ID    || 'i-gjcga_WIhgqdWjqK3ICcQ9yzva8vM3rRMbhz5CZZo05oSIKSpN4DtDhhio_8Jm',
+        clientSecret:      process.env.GENIUS_CLIENT_SECRET || 'n4zkk34fd-6tIn-XAjcZqwkcXydoz_FS-8fKxIF3ov22GKjAu4HusUCkERTMVx9Nm7dOSAr3ehg1EkvtQTTqCA',
     },
 
     // ── AI Brain — model SLOTS (NVIDIA NIM) ─────────────────────────────────
@@ -78,9 +76,9 @@ const config = {
     //   [JB-BRAIN] slot B: deepseek-ai/deepseek-v4-flash-0731
     // To swap a model, just edit the matching field below — the slot letter
     // in your console output always matches the field name here.
-    // Get your key at https://build.nvidia.com → set NVIDIA_API_KEY in .env
+    // Get your key at https://build.nvidia.com → override via NVIDIA_API_KEY
     nvidia: {
-        apiKey: process.env.NVIDIA_API_KEY || '',
+        apiKey: process.env.NVIDIA_API_KEY || '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',
         // Key 1 — powers SLOT A and SLOT C below
 
         // ── SLOT A — primary brain, tried 2nd (bonus-quality attempt) ──
@@ -106,7 +104,7 @@ const config = {
     //   • vision replies when an image is sent (brain/visionAi.js)
     //   • background memory summarisation (brain/memory.js)
     nvidiaMedia: {
-        apiKey: process.env.NVIDIA_MEDIA_API_KEY || '',
+        apiKey: process.env.NVIDIA_MEDIA_API_KEY || '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',
         // Key 2 — powers SLOT B below, plus vision + summary models
 
         // ── SLOT B — fallback brain, tried last (best reasoning, 1M ctx) ──
