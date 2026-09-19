@@ -1,6 +1,5 @@
 const axios = require('axios');
 const config = require('../config');
-const { buildCard, buildStatusCard } = require('../tools/style');
 
 // ── Genius API helpers ────────────────────────────────────────────────────────
 
@@ -101,10 +100,15 @@ const decodeHtmlEntities = (text) => text
   .replace(/&#x27;/gi, "'")
   .replace(/&apos;/g, "'")
   .replace(/&nbsp;/g, ' ')
-  .replace(/&#x([0-9a-f]+);/gi, (_, hex) => String.fromCodePoint(parseInt(hex, 16)))
-  .replace(/&#(\d+);/g, (_, dec) => String.fromCodePoint(parseInt(dec, 10)))
+  .replace(/&#x([0-9a-f]+);/gi, (_, hex) => safeCodePoint(parseInt(hex, 16)))
+  .replace(/&#(\d+);/g, (_, dec) => safeCodePoint(parseInt(dec, 10)))
   // &amp; must be decoded last, otherwise "&amp;#39;" would double-decode.
   .replace(/&amp;/g, '&');
+
+// String.fromCodePoint throws RangeError for NaN/negative/>0x10FFFF — guard
+// against a malformed entity crashing the whole lyrics command.
+const safeCodePoint = (cp) =>
+  Number.isInteger(cp) && cp >= 0 && cp <= 0x10FFFF ? String.fromCodePoint(cp) : '';
 
 /**
  * Genius's first lyrics container is often prefixed with page chrome that
@@ -216,7 +220,7 @@ const buildHeader = ({ title, artist, query }) =>
 
 module.exports = {
   name: 'lyrics',
-  aliases: ['lyric', 'lyr', 'words', 'lrics'],
+  aliases: ['lyric', 'lyr', 'words'],
   category: 'cmd',
   description: 'Fetch song lyrics from Genius',
   usage: '.lyrics <song name> [- artist]',
@@ -227,13 +231,9 @@ module.exports = {
 
     if (!query) {
       await sock.sendMessage(from, {
-        text: buildStatusCard({
-          title: 'LYRICS',
-          status: '⫎ Provide a song name.',
-          lines: [`Example: *${config.prefix}lyrics Chamunorwa Bagga*`],
-        })
+        text: `⧯ Provide a song name.\n\nExample: *${config.prefix}lyrics Chamunorwa Bagga*`
       }, { quoted: msg });
-      return;
+      return { ok: false, reason: 'no_query', message: 'No song name was given — asked the user to provide one.' };
     }
 
     try {
@@ -243,75 +243,51 @@ module.exports = {
       const song = await searchGenius(query);
       if (!song) {
         await sock.sendMessage(from, {
-          text: buildStatusCard({
-            title: 'LYRICS',
-            status: '❌ No results found on Genius.',
-            lines: [`Query: _${query}_`],
-          })
+          text: `❌ No results found on Genius for: _${query}_`
         }, { quoted: msg });
         if (typeof extra.react === 'function') await extra.react('❌');
-        return;
+        return { ok: false, reason: 'not_found', message: 'No Genius results for that query — told the user.' };
       }
 
       // ── Step 2: Scrape the lyrics from the Genius page ──
       const rawLyrics = await scrapeLyrics(song.url);
       if (!rawLyrics) {
         await sock.sendMessage(from, {
-          text: buildStatusCard({
-            title: 'LYRICS',
-            status: `⚠️ Found *${song.title}* by *${song.artist}* but could not extract lyrics.`,
-            lines: [`🔗 Read on Genius: ${song.url}`],
-          })
+          text: `⚠️ Found *${song.title}* by *${song.artist}* but could not extract lyrics.\n\n🔗 Read on Genius: ${song.url}`
         }, { quoted: msg });
         if (typeof extra.react === 'function') await extra.react('⚠️');
-        return;
+        return { ok: false, reason: 'extract_failed', message: `Found the song on Genius but couldn't extract lyrics text — sent a link instead.` };
       }
 
       // ── Step 3: Send — split if lyrics exceed WhatsApp limit ──
+      const header = buildHeader({ title: song.title, artist: song.artist, query });
       const chunks = splitLyrics(rawLyrics);
 
       // First message: header + first chunk
       await sock.sendMessage(from, {
-        text: buildCard({
-          title: 'LYRICS',
-          lines: [
-            `◈ *TITLE :* \`${song.title}\``,
-            `◈ *ARTIST :* \`${song.artist}\``,
-            '',
-            chunks[0],
-          ],
-        })
+        text: `${header}\n\n${chunks[0]}\n\n> ☬ *𝚂𝙾𝚄𝚁𝙲𝙴 :* 𝙶𝙴𝙽𝙸𝚄𝚂 ☬`
       }, { quoted: msg });
 
       // Subsequent chunks (if any) sent as follow-ups
       for (let i = 1; i < chunks.length; i++) {
         await sock.sendMessage(from, {
-          text: buildCard({
-            title: 'LYRICS',
-            lines: [chunks[i]],
-          })
+          text: chunks[i] + (i === chunks.length - 1 ? '\n\n> ☬ *𝚂𝙾𝚄𝚁𝙲𝙴 :* 𝙶𝙴𝙽𝙸𝚄𝚂 ☬' : '')
         }, { quoted: msg });
       }
 
       if (typeof extra.react === 'function') await extra.react('✅');
+      return { ok: true };
 
     } catch (error) {
       console.error('[LYRICS] Error:', error.message || error);
 
       const userMsg = error.message?.includes('access token')
-        ? buildStatusCard({
-          title: 'LYRICS',
-          status: '🔑 Genius API not configured.',
-          lines: [error.message],
-        })
-        : buildStatusCard({
-          title: 'LYRICS',
-          status: '❌ Failed to fetch lyrics.',
-          lines: [error.message],
-        });
+        ? `🔑 Genius API not configured.\n\n${error.message}`
+        : `❌ Failed to fetch lyrics: ${error.message}`;
 
       await sock.sendMessage(from, { text: userMsg }, { quoted: msg });
       if (typeof extra.react === 'function') await extra.react('❌');
+      return { ok: false, reason: 'error', message: error.message };
     }
   },
 };

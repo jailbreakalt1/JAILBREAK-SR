@@ -1,18 +1,19 @@
-const fs = require('fs');
+const fs   = require('fs');
 const path = require('path');
-const config = require('./config');
+const config   = require('./config');
 const database = require('./database');
-const chalk = require('chalk');
-const { normalizeMessageContent } = require('@whiskeysockets/baileys');
+const chalk    = require('chalk');
+const { normalizeMessageContent, downloadMediaMessage } = require('@whiskeysockets/baileys');
 const { cleanNumber, resolvePhoneJid, getOwnPhoneJid } = require('./tools/jidCleanser');
-const songRecommend = require('./tools/songRecommend');
-const songCommand = require('./cmd/fix-song');
-const videoCommand = require('./cmd/fix-video');
-const imgCommand = require('./cmd/fix-img');
-const buttonContext = require('./tools/buttonContext');
-const { buildStatusCard } = require('./tools/style');
-const { getMode } = require('./tools/modeManager');
-const shiftGate = require('./tools/shiftGate');
+const brain      = require('./brain/ai');
+const visionBrain = require('./brain/visionAi');
+const memory     = require('./brain/memory');
+const userProfiles = require('./brain/userProfiles');
+const checkIn    = require('./brain/checkIn');
+const tts        = require('./brain/tts');
+const quota      = require('./tools/quota');
+const songRecommend = require('./brain/songRecommend');
+const toolRunner = require('./brain/toolRunner');
 
 const badWords = [
   'fuck', 'fck', 'fuk', 'fvck', 'shit', 'sh1t', 'ass', 'azz', 'arse',
@@ -37,20 +38,17 @@ function normalizeBody(text) {
 const badWordRegex = new RegExp(badWords.map(w => `\\b${w}\\b`).join('|'), 'i');
 
 const spamTracker = {
-  duplicates: new Map(),
-  userHistory: new Map(),
+  duplicates:    new Map(),
+  userHistory:   new Map(),
   globalHistory: [],
-  warnings: new Map(),
+  warnings:      new Map(),
 };
 
 const commands = new Map();
 
 function loadCommands() {
-  // Scan these folders for command modules. Any .js file that exports
-  // an object with a `name` property is registered automatically -
-  // no need to add a require() line here when you drop in a new command.
   const commandDirs = ['cmd', 'tools'];
-  const thisFile = path.basename(__filename);
+  const thisFile    = path.basename(__filename);
 
   for (const dir of commandDirs) {
     const fullDir = path.join(__dirname, dir);
@@ -72,8 +70,6 @@ function loadCommands() {
         continue;
       }
 
-      // Files without a `name` export (helpers like api.js, converter.js,
-      // tempManager.js, etc.) aren't commands - skip them silently.
       if (!cmd || !cmd.name) continue;
 
       if (commands.has(cmd.name.toLowerCase())) {
@@ -105,27 +101,19 @@ setInterval(() => {
     else spamTracker.userHistory.delete(user);
   }
   for (const [user, data] of spamTracker.warnings) {
-    if (data.mutedUntil && now > data.mutedUntil) spamTracker.warnings.delete(user);
+    const strikesDecayMs = config.spam.perUserWindow * 1000 * 6; // decay unused strikes after ~6 windows
+    if ((data.mutedUntil && now > data.mutedUntil) || (data.updatedAt && now - data.updatedAt > strikesDecayMs)) {
+      spamTracker.warnings.delete(user);
+    }
   }
 }, 30 * 1000);
 
 function isOwner(jid, pushName) {
-  // `jid` is expected to already be a cleansed phone-number JID by the time
-  // it gets here (the global cleanser runs in index.js before handleMessage
-  // is ever called), but we strip defensively anyway - this must NEVER
-  // compare against a raw LID number, or the real owner gets mistaken for
-  // a random stranger and every owner-only command silently refuses to fire.
   const sender = cleanNumber(jid);
   return config.ownerNumber.map(n => n.replace(/[^0-9]/g, '')).includes(sender) ||
     config.ownerName.some(name => name.toLowerCase() === (pushName || '').toLowerCase());
 }
 
-/**
- * Compare a group-metadata participant id (`p.id`, which itself can be in
- * @lid form for LID-addressed groups) against an already-cleansed sender
- * jid, resolving the @lid side first so the comparison is always done on
- * real phone numbers.
- */
 async function participantMatches(sock, participantId, cleanSenderJid) {
   if (!participantId || !cleanSenderJid) return false;
   if (participantId === cleanSenderJid) return true;
@@ -168,173 +156,129 @@ async function isBotAdmin(sock, jid) {
   }
 }
 
-function collectContextInfos(message, out = []) {
-  if (!message || typeof message !== 'object') return out;
-  for (const value of Object.values(message)) {
-    if (!value || typeof value !== 'object') continue;
-    if (value.contextInfo) out.push(value.contextInfo);
-    if (value.message) collectContextInfos(value.message, out);
-  }
-  return out;
-}
+// ── (relayDataReply removed) ────────────────────────────────────────────────
+// The old single-shot dispatch needed a separate "relay" call to phrase tool
+// results in JB's voice, since the brain only ever got one shot per turn.
+// The agentic tool loop in brain/ai.js now handles this natively — the model
+// sees tool results directly in its own reasoning loop and produces the
+// final phrased reply itself, with the same C→A→B fallback waterfall already
+// applied to every step. One text-generation path instead of two.
 
-function botWasMentioned(sock, msg, body = '') {
-  const botJid = getOwnPhoneJid(sock);
-  const botNumber = cleanNumber(botJid);
-  if (!botNumber) return false;
+// ── Auto-shazam (audio/video → brain → auto-download) ──────────────────────────
+// Triggered when a bare audio clip OR video lands in a DM with no command/caption.
+// Identifies the song, hands the brain a synthetic note so it can react in
+// character ("yo i heard X by Y, hold on i gatchu"), then downloads and sends
+// the track automatically — no follow-up command needed from the user.
+const AUTO_SHAZAM_BRAIN_TIMEOUT = 20000;
 
-  const contexts = collectContextInfos(msg.message);
-  const mentioned = contexts.some((ctx) =>
-    Array.isArray(ctx.mentionedJid) &&
-    ctx.mentionedJid.some((jid) => cleanNumber(jid) === botNumber)
-  );
+async function handleAutoShazam(sock, msg, { from, sender, pushName, commands, mediaType }) {
+  const senderNum = sender?.split('@')[0] || '?';
+  const tag = mediaType === 'video' ? 'video' : 'audio';
+  const findCmd = commands.get('find');
+  if (!findCmd) return;
 
-  return mentioned || body.includes(`@${botNumber}`);
-}
-
-function hasVideoFindTarget(normalizedMsg) {
-  if (normalizedMsg?.videoMessage) return true;
-
-  const contexts = collectContextInfos(normalizedMsg);
-  return contexts.some((ctx) => Boolean(ctx?.quotedMessage?.videoMessage));
-}
-
-function stripBotMention(sock, body) {
-  const botNumber = cleanNumber(getOwnPhoneJid(sock));
-  if (!botNumber) return body.trim();
-  return body
-    .replace(new RegExp(`@${botNumber}\\b`, 'g'), ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-}
-
-async function handleFindDownloadTap(sock, msg, from, sender, senderNum, tapId) {
-  const query = decodeURIComponent(tapId.slice('finddl:'.length)).trim();
-  if (!query) {
-    console.log(chalk.gray('  ⧈ ') + chalk.cyan('BUTTON') + chalk.gray(' ── ') + chalk.white(senderNum) + chalk.red(' EMPTY FIND TAP'));
+  const q = quota.getQuota(sender);
+  if (!q.allowed) {
+    console.log(chalk.gray('  ⧈ ') + chalk.cyan('AUTO-SHAZAM') + chalk.gray(` [${tag}]`) + chalk.gray(' ── ') + chalk.white(senderNum) + chalk.yellow(` quota ${q.used}/${q.total}`));
     return;
   }
 
-  // DM mode gate (mirror command routing).
-  if (!from.endsWith('@g.us')) {
-    const currentMode = getMode();
-    if (currentMode === 'owner' && !isOwner(sender, msg.pushName || '')) {
-      console.log(chalk.gray('  ⧈ ') + chalk.cyan('MODE') + chalk.gray(' ── ') + chalk.white(senderNum) + chalk.red(' OWNER-ONLY BUTTON TAP'));
-      return sock.sendMessage(from, { text: '⫎ Bot is in *Owner mode* — only the bot owner can use commands in DM.' }, { quoted: msg });
-    }
-  }
-
-  console.log(chalk.gray('  ⧈ ') + chalk.cyan('BUTTON') + chalk.gray(' ── ') + chalk.white(senderNum) + chalk.yellow(' FIND-DOWNLOAD ') + chalk.white(query));
-
-  const sent = await songCommand.sendSong(sock, msg, query, {
-    from,
-    sender,
-    pushName: msg.pushName || '',
-    quietFailure: true,
+  const shazamExtra = {
+    from, sender, pushName,
+    getCommands: () => commands,
+    reply: async (text, extraContent) => {
+      await sock.sendMessage(from, { text: String(text), ...(extraContent || {}) }, { quoted: msg, __skipStyle: true });
+    },
     react: async (emoji) => {
       try { await sock.sendMessage(from, { react: { text: emoji, key: msg.key } }); } catch (_) {}
     },
-  });
-
-  if (!sent) {
-    await sock.sendMessage(from, {
-      text: buildStatusCard({
-        title: 'SONG DOWNLOAD',
-        status: '❌ Button download failed.',
-        lines: ['Try .song directly or tap once more.'],
-      })
-    }, { quoted: msg });
-  }
-}
-
-async function handleFindVideoTap(sock, msg, from, sender, senderNum, tapId) {
-  const query = decodeURIComponent(tapId.slice('viddl:'.length)).trim();
-  if (!query) {
-    console.log(chalk.gray('  ⧈ ') + chalk.cyan('BUTTON') + chalk.gray(' ── ') + chalk.white(senderNum) + chalk.red(' EMPTY VID TAP'));
-    return;
-  }
-
-  if (!from.endsWith('@g.us')) {
-    const currentMode = getMode();
-    if (currentMode === 'owner' && !isOwner(sender, msg.pushName || '')) {
-      console.log(chalk.gray('  ⧈ ') + chalk.cyan('MODE') + chalk.gray(' ── ') + chalk.white(senderNum) + chalk.red(' OWNER-ONLY BUTTON TAP'));
-      return sock.sendMessage(from, { text: '⫎ Bot is in *Owner mode* — only the bot owner can use commands in DM.' }, { quoted: msg });
-    }
-  }
-
-  console.log(chalk.gray('  ⧈ ') + chalk.cyan('BUTTON') + chalk.gray(' ── ') + chalk.white(senderNum) + chalk.yellow(' FIND-VIDEO ') + chalk.white(query));
+  };
 
   try {
-    await videoCommand.execute(sock, msg, [query], {
-      from,
-      sender,
-      pushName: msg.pushName || '',
-      react: async (emoji) => {
-        try { await sock.sendMessage(from, { react: { text: emoji, key: msg.key } }); } catch (_) {}
-      },
-    });
-  } catch (error) {
-    console.error('[BUTTON] video tap failed:', error?.message || error);
-    await sock.sendMessage(from, {
-      text: buildStatusCard({
-        title: 'VIDEO DOWNLOAD',
-        status: '❌ Button video fetch failed.',
-        lines: ['Try .video directly.'],
-      })
-    }, { quoted: msg });
-  }
-}
+    await shazamExtra.react('🔎');
 
-async function handleFindImageTap(sock, msg, from, sender, senderNum, tapId) {
-  const query = decodeURIComponent(tapId.slice('imgdl:'.length)).trim();
-  if (!query) {
-    console.log(chalk.gray('  ⧈ ') + chalk.cyan('BUTTON') + chalk.gray(' ── ') + chalk.white(senderNum) + chalk.red(' EMPTY IMG TAP'));
-    return;
-  }
+    const mediaBuffer = await downloadMediaMessage(
+      msg, 'buffer', {},
+      { logger: undefined, reuploadRequest: sock.updateMediaMessage }
+    );
+    if (!mediaBuffer?.length) throw new Error(`could not download ${tag}`);
 
-  if (!from.endsWith('@g.us')) {
-    const currentMode = getMode();
-    if (currentMode === 'owner' && !isOwner(sender, msg.pushName || '')) {
-      console.log(chalk.gray('  ⧈ ') + chalk.cyan('MODE') + chalk.gray(' ── ') + chalk.white(senderNum) + chalk.red(' OWNER-ONLY BUTTON TAP'));
-      return sock.sendMessage(from, { text: '⫎ Bot is in *Owner mode* — only the bot owner can use commands in DM.' }, { quoted: msg });
+    const song = await findCmd.identifySong(mediaBuffer);
+
+    let note;
+    if (!song) {
+      console.log(chalk.gray('  ⧈ ') + chalk.cyan('AUTO-SHAZAM') + chalk.gray(` [${tag}]`) + chalk.gray(' ── ') + chalk.white(senderNum) + chalk.yellow(' no match'));
+      note = `[SHAZAM] The user just sent a ${tag} clip but it could NOT be identified. Tell them you couldn't place it and to try sending a clearer/longer clip. Don't trigger any action.`;
+      await shazamExtra.react('❌');
+    } else {
+      const title   = song.title || 'Unknown';
+      const artists = song.artists?.map(a => a.name).join(', ') || 'Unknown';
+      console.log(chalk.gray('  ⧈ ') + chalk.cyan('AUTO-SHAZAM') + chalk.gray(` [${tag}]`) + chalk.gray(' ── ') + chalk.white(senderNum) + chalk.green(` heard: ${title} by ${artists}`));
+      // Persist this permanently so "the song"/"that track" resolves correctly
+      // later in the chat, even after normal history gets summarized away.
+      memory.addSong(from, `${title} by ${artists}`);
+      note = `[SHAZAM] USER: sent a ${tag} clip containing "${title}" by ${artists}. Tell them what you heard in your own words (e.g. "yo i heard ${title} by ${artists}, hold on i gatchu") then say you're sending it now. Keep it short. Do NOT return a JSON action — the track is already being sent for you.`;
+
+      // Fire the brain reply and the YouTube resolve in parallel — both are independent.
+      const brainPromise = Promise.race([
+        brain.think(from, note, { pushName }),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('brain timeout')), AUTO_SHAZAM_BRAIN_TIMEOUT)),
+      ]).catch(err => {
+        console.error(chalk.red('[AUTO-SHAZAM BRAIN]'), err.message);
+        return { type: 'text', reply: `yo i heard ${title} by ${artists}, hold on i gatchu` };
+      });
+
+      const query = `${title} ${artists}`.trim();
+      const { url: ytUrl, thumbnail } = await findCmd.resolveYoutubeMatch(query);
+
+      const result = await brainPromise;
+      if (result?.reply) await shazamExtra.reply(result.reply);
+
+      await shazamExtra.react('🎵');
+      const sent = await findCmd.sendIdentifiedAudio(sock, msg, shazamExtra, { title, artists, ytUrl, thumbnail });
+      if (sent) {
+        const q2 = quota.useQuota(sender);
+        await shazamExtra.react('✅');
+        // sendIdentifiedAudio already retries internally on flaky sources —
+        // record the outcome so future turns know this request was fulfilled.
+        memory.add(from, 'assistant', `[sent the audio file for "${title}" by ${artists}]`);
+      } else {
+        const failMsg = `couldn't grab the file for ${title} though, source is acting up — try again in ${config.spam.duplicateCooldown}s`;
+        await shazamExtra.reply(failMsg);
+        await shazamExtra.react('❌');
+        // Record the failure in memory (this used to be invisible to the
+        // brain — it would think the download succeeded and get confused
+        // when asked about it later, sometimes leaking raw tool syntax
+        // while trying to retry blindly).
+        memory.add(from, 'assistant', failMsg);
+      }
+      return;
     }
-  }
 
-  console.log(chalk.gray('  ⧈ ') + chalk.cyan('BUTTON') + chalk.gray(' ── ') + chalk.white(senderNum) + chalk.yellow(' FIND-IMG ') + chalk.white(query));
+    // No-match path — just relay the brain's reaction, no download to attempt.
+    const result = await Promise.race([
+      brain.think(from, note, { pushName }),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('brain timeout')), AUTO_SHAZAM_BRAIN_TIMEOUT)),
+    ]).catch(() => ({ type: 'text', reply: "couldn't catch that one, send a clearer clip?" }));
 
-  try {
-    await imgCommand.execute(sock, msg, [query], {
-      from,
-      sender,
-      pushName: msg.pushName || '',
-      react: async (emoji) => {
-        try { await sock.sendMessage(from, { react: { text: emoji, key: msg.key } }); } catch (_) {}
-      },
-    });
-  } catch (error) {
-    console.error('[BUTTON] image tap failed:', error?.message || error);
-    await sock.sendMessage(from, {
-      text: buildStatusCard({
-        title: 'ARTIST PHOTOS',
-        status: '❌ Button photo fetch failed.',
-        lines: ['Try .img directly.'],
-      })
-    }, { quoted: msg });
+    if (result?.reply) await shazamExtra.reply(result.reply);
+
+  } catch (err) {
+    console.error(chalk.red('[AUTO-SHAZAM]'), err.message);
+    await shazamExtra.reply(`something broke trying to catch that ${tag}, try again in ${config.spam.duplicateCooldown}s`).catch(() => {});
+    await shazamExtra.react('❌').catch(() => {});
   }
 }
+
+// ── Main message handler ──────────────────────────────────────────────────────
 
 async function handleMessage(sock, msg) {
   const from = msg.key?.remoteJid;
-  // In a 1:1 chat, WhatsApp never sets `participant` - only groups do. So
-  // for an outgoing (fromMe) DM, `participant || from` used to fall back
-  // to `from`, which is the OTHER person's jid, not yours - the bot would
-  // think a message you sent to a friend came FROM that friend, fail the
-  // owner check, and silently refuse to trigger. When fromMe is true, the
-  // sender is unambiguously this account; never infer it from remoteJid.
   let sender = msg.key?.fromMe
     ? (getOwnPhoneJid(sock) || msg.key.participant || from)
     : (msg.key.participant || from);
   const senderNum = sender?.split('@')[0] || '?';
+
   try {
     songRecommend.clear(sender);
 
@@ -351,110 +295,243 @@ async function handleMessage(sock, msg) {
       normalizedMsg?.documentMessage?.caption ||
       '';
 
-    const nativeFlow = msg.message?.interactiveResponseMessage?.nativeFlowResponseMessage;
-    const templateReply = msg.message?.templateButtonReplyMessage;
-    const buttonsReply = msg.message?.buttonsResponseMessage;
-    const motionTap = msg.message?.interactiveResponseMessage?.motionResponseMessage;
-    let tapId = '';
-    let tapLabel = '';
-    if (nativeFlow?.paramsJson) {
-      let tapParams = {};
-      try { tapParams = JSON.parse(nativeFlow.paramsJson); } catch (_) {}
-      tapId = typeof tapParams?.id === 'string' ? tapParams.id : '';
-      tapLabel = typeof tapParams?.display_text === 'string' ? tapParams.display_text : '';
-    }
-    // Some clients deliver quick_reply taps as templateButtonReplyMessage
-    // (fields: selectedId / selectedDisplayText) or, on older clients, as
-    // buttonsResponseMessage (selectedButtonId / selectedDisplayText) —
-    // not as nativeFlowResponseMessage.
-    if (!tapId) {
-      if (typeof templateReply?.selectedId === 'string' && templateReply.selectedId) tapId = templateReply.selectedId;
-      else if (typeof templateReply?.id === 'string') tapId = templateReply.id;
-    }
-    if (!tapId) {
-      if (typeof buttonsReply?.selectedButtonId === 'string' && buttonsReply.selectedButtonId) tapId = buttonsReply.selectedButtonId;
-      else if (typeof buttonsReply?.selectedId === 'string') tapId = buttonsReply.selectedId;
-    }
-    if (!tapId && typeof motionTap?.id === 'string') tapId = motionTap.id;
-    tapLabel = tapLabel ||
-      (typeof templateReply?.selectedDisplayText === 'string' ? templateReply.selectedDisplayText : '') ||
-      (typeof buttonsReply?.selectedDisplayText === 'string' ? buttonsReply.selectedDisplayText : '');
+    const pushName = msg.pushName || '';
 
-    // Some clients don't deliver the button id back (or deliver the tap as
-    // plain text of the display label). Match the label and pull the query
-    // from the button context we stored when the follow-up was sent.
-    if (!tapId) {
-      const ctx = buttonContext.get(from);
-      const label = tapLabel || body;
-      const prefix = ({ '🎬 FETCH VIDEO': 'viddl:', '🎵 GET MP3': 'finddl:', '📸 FETCH PHOTOS': 'imgdl:' })[label];
-      if (prefix && ctx?.videoQuery) tapId = prefix + encodeURIComponent(ctx.videoQuery);
-      if (!tapId && (nativeFlow || templateReply || buttonsReply || motionTap)) {
-        const raw = nativeFlow || templateReply || buttonsReply || motionTap || {};
-        console.log(chalk.gray('  ⧈ ') + chalk.cyan('BUTTON') + chalk.gray(' ── ') + chalk.white(senderNum) + chalk.red(' UNHANDLED TAP ') + chalk.gray(JSON.stringify(raw).slice(0, 160)));
-      }
-    }
+    if (!body.startsWith(config.prefix)) {
+      // ── Auto-shazam: bare video OR audio in a DM → identify, brain reacts, auto-send ─
+      const isDM = !from.endsWith('@g.us');
+      const isVideoMessage = !!(normalizedMsg?.videoMessage);
+      const isAudioMessage = !!(normalizedMsg?.audioMessage);
 
-    if (tapId) {
-      console.log(chalk.gray('  ⧈ ') + chalk.cyan('TAP') + chalk.gray(' ── ') + chalk.white(senderNum) + chalk.gray(' ') + chalk.yellowBright(tapId.slice(0, 40)));
-      if (tapId.startsWith('finddl:')) {
-        await handleFindDownloadTap(sock, msg, from, sender, senderNum, tapId);
+      if (isDM && isAudioMessage && !body.trim()) {
+        console.log(chalk.gray('  ⧈ ') + chalk.cyan('AUTO-SHAZAM') + chalk.gray(' [audio→brain]') + chalk.gray(' ── ') + chalk.white(senderNum));
+        await handleAutoShazam(sock, msg, { from, sender, pushName, commands, mediaType: 'audio' });
         return;
       }
-      if (tapId.startsWith('viddl:')) {
-        await handleFindVideoTap(sock, msg, from, sender, senderNum, tapId);
+
+      if (isDM && isVideoMessage && !body.trim()) {
+        console.log(chalk.gray('  ⧈ ') + chalk.cyan('AUTO-SHAZAM') + chalk.gray(' [video→brain]') + chalk.gray(' ── ') + chalk.white(senderNum));
+        await handleAutoShazam(sock, msg, { from, sender, pushName, commands, mediaType: 'video' });
         return;
       }
-      if (tapId.startsWith('imgdl:')) {
-        await handleFindImageTap(sock, msg, from, sender, senderNum, tapId);
+
+      // ── AI Vision: handle messages containing images ─────────────────────
+      const imageMessage = normalizedMsg?.imageMessage;
+      if (imageMessage) {
+        const aiAccessImg = config.ai?.access || 'all';
+        if (aiAccessImg === 'owner' && !isOwner(sender, pushName)) {
+          console.log(chalk.gray('  ⧈ ') + chalk.cyan('VISION') + chalk.gray(' ── ') + chalk.white(senderNum) + chalk.red(' AI ACCESS DENIED'));
+          return;
+        }
+
+        if (from.endsWith('@g.us')) {
+          const gSettings = database.getGroupSettings(from);
+          if (!gSettings.aiEnabled) return;
+        }
+
+        const VISION_MIN_REPLY_DELAY = 4000;
+        let _lastVisionReply = 0;
+        const visionReply = async (text, extraContent) => {
+          const elapsed = Date.now() - _lastVisionReply;
+          if (elapsed < VISION_MIN_REPLY_DELAY) {
+            await new Promise(resolve => setTimeout(resolve, VISION_MIN_REPLY_DELAY - elapsed));
+          }
+          _lastVisionReply = Date.now();
+          await sock.sendMessage(from, { text: String(text), ...(extraContent || {}) }, { quoted: msg, __skipStyle: true });
+        };
+
+        console.log(chalk.gray('  ⧈ ') + chalk.green('VISION') + chalk.gray(' ── ') + chalk.white(senderNum) + chalk.gray(' looking: ') + chalk.white(JSON.stringify(body.slice(0, 60))));
+
+        try {
+          await sock.sendPresenceUpdate('composing', from).catch(() => {});
+
+          const mediaBuffer = await downloadMediaMessage(
+            msg, 'buffer', {},
+            { logger: undefined, reuploadRequest: sock.updateMediaMessage }
+          );
+          if (!mediaBuffer?.length) throw new Error('could not download image');
+
+          const VISION_TIMEOUT = 40000;
+          const result = await Promise.race([
+            visionBrain.see(
+              from, body,
+              [{ mimetype: imageMessage.mimetype, base64: mediaBuffer.toString('base64') }],
+              { pushName, sender }
+            ),
+            new Promise((_, reject) =>
+              setTimeout(() => reject(new Error('vision timeout')), VISION_TIMEOUT)
+            ),
+          ]);
+
+          await sock.sendPresenceUpdate('paused', from).catch(() => {});
+          if (result?.reply) {
+            const voiceSent =
+              !from.endsWith('@g.us') && tts.tick(from) &&
+              await tts.sendVoiceReply(sock, from, result.reply);
+            if (!voiceSent) await visionReply(result.reply);
+          }
+
+        } catch (visionErr) {
+          await sock.sendPresenceUpdate('paused', from).catch(() => {});
+          if (visionErr.message === 'vision timeout') {
+            console.error(chalk.red('[VISION TIMEOUT]'), from);
+            await visionReply(`took too long looking at that, try again in ${config.spam.duplicateCooldown}s`).catch(() => {});
+          } else {
+            console.error(chalk.red('[VISION ERROR]'), visionErr.message);
+            await visionReply(`something broke looking at that, try again in ${config.spam.duplicateCooldown}s`).catch(() => {});
+          }
+        }
         return;
       }
-      if (tapId.startsWith('ytselect:')) {
-        await handleFindDownloadTap(sock, msg, from, sender, senderNum, `finddl:${tapId.slice('ytselect:'.length)}`);
+      // ── End AI Vision ────────────────────────────────────────────────────
+
+      // ── AI Brain: handle natural-language messages ──────────────────────
+      if (!body.trim()) {
+        console.log(chalk.gray('  ⧈ ') + chalk.cyan('BRAIN') + chalk.gray(' ── ') + chalk.white(senderNum) + chalk.red(' NO BODY'));
         return;
       }
+
+      const aiAccess = config.ai?.access || 'all';
+      if (aiAccess === 'owner' && !isOwner(sender, pushName)) {
+        console.log(chalk.gray('  ⧈ ') + chalk.cyan('BRAIN') + chalk.gray(' ── ') + chalk.white(senderNum) + chalk.red(' AI ACCESS DENIED'));
+        return;
+      }
+
+      if (from.endsWith('@g.us')) {
+        const gSettings = database.getGroupSettings(from);
+        if (!gSettings.aiEnabled) return;
+      }
+
+      // Track last-seen for the autonomous check-in feature.
+      // Init the scheduler lazily on the first DM so we always have a live sock.
+      if (!from.endsWith('@g.us')) {
+        checkIn.updateLastSeen(from, pushName);
+        if (!checkIn.isInitialized()) checkIn.init(sock, config);
+        songRecommend.setSock(sock);
+      }
+
+      const AI_MIN_REPLY_DELAY = 4000;
+      let _lastAiReply = 0;
+      const brainExtra = {
+        from, sender, pushName,
+        getCommands: () => commands,
+        reply: async (text, extraContent) => {
+          const elapsed = Date.now() - _lastAiReply;
+          if (elapsed < AI_MIN_REPLY_DELAY) {
+            await new Promise(resolve => setTimeout(resolve, AI_MIN_REPLY_DELAY - elapsed));
+          }
+          _lastAiReply = Date.now();
+          await sock.sendMessage(from, { text: String(text), ...(extraContent || {}) }, { quoted: msg, __skipStyle: true });
+        },
+        react: async (emoji) => {
+          try { await sock.sendMessage(from, { react: { text: emoji, key: msg.key } }); } catch (_) {}
+        },
+      };
+
+      let userInput = body;
+      const quotedText =
+        normalizedMsg?.extendedTextMessage?.contextInfo?.quotedMessage?.conversation ||
+        normalizedMsg?.extendedTextMessage?.contextInfo?.quotedMessage?.extendedTextMessage?.text ||
+        normalizedMsg?.extendedTextMessage?.contextInfo?.quotedMessage?.imageMessage?.caption ||
+        normalizedMsg?.extendedTextMessage?.contextInfo?.quotedMessage?.videoMessage?.caption ||
+        null;
+      if (quotedText) {
+        const quotedParticipant = normalizedMsg?.extendedTextMessage?.contextInfo?.participant;
+        let quotedLabel = 'someone';
+        if (quotedParticipant) {
+          const ownJid = getOwnPhoneJid(sock);
+          if (ownJid && cleanNumber(quotedParticipant) === cleanNumber(ownJid)) {
+            quotedLabel = 'JB';
+          } else if (cleanNumber(quotedParticipant) === cleanNumber(sender)) {
+            quotedLabel = pushName || 'you';
+          } else {
+            quotedLabel = cleanNumber(quotedParticipant);
+          }
+        }
+        userInput = `[quoting ${quotedLabel}: "${quotedText.slice(0, 120)}"]\n${body}`;
+      }
+
+      // ── Sign-in hint: if this DM's first message in a while, let brain know ──
+      if (!from.endsWith('@g.us')) {
+        const lastActive = checkIn.getLastSeen(from);
+        const gap = lastActive ? Date.now() - lastActive : 0;
+        if (gap > 60 * 60 * 1000) {
+          const mins = Math.round(gap / 60000);
+          const label = mins >= 120 ? `${Math.round(mins / 60)}h` : `${mins}m`;
+          userInput = `[User signing in — first message in ${label}]\n${userInput}`;
+        }
+      }
+
+      console.log(chalk.gray('  ⧈ ') + chalk.green('BRAIN') + chalk.gray(' ── ') + chalk.white(senderNum) + chalk.gray(' thinking: ') + chalk.white(JSON.stringify(body.slice(0, 60))));
+
+      // Live reactions while the agentic loop runs tools, so the chat shows
+      // progress instead of going silent for several seconds.
+      const TOOL_REACT = {
+        weather: '🌍', time: '🕐', search: '🔍', songguess: '🎵',
+        song: '🎧', video: '🎬', lyrics: '📜', find: '🔎', download_song: '🎧',
+      };
+
+      try {
+        await sock.sendPresenceUpdate('composing', from).catch(() => {});
+
+        const BRAIN_TIMEOUT = 180000; // ceiling — loop can run tool calls, a waterfall retry, and Firecrawl-scrape rounds on slow nights
+        let brainTimer;
+        const result = await Promise.race([
+          brain.think(from, userInput, {
+            pushName,
+            sender,
+            sock, msg, commands,
+            brainExtra,
+            onTool: (name) => {
+              const emoji = TOOL_REACT[name];
+              if (emoji) brainExtra.react(emoji).catch(() => {});
+            },
+          }),
+          new Promise((_, reject) => {
+            brainTimer = setTimeout(() => reject(new Error('brain timeout')), BRAIN_TIMEOUT);
+          }),
+        ]).finally(() => clearTimeout(brainTimer));
+
+        await sock.sendPresenceUpdate('paused', from).catch(() => {});
+
+        // Persist any facts the brain chose to remember about this user
+        if (result.remember) {
+          userProfiles.save(from, result.remember);
+        }
+
+        if (result.reply) {
+          const voiceSent =
+            !from.endsWith('@g.us') && tts.tick(from) &&
+            await tts.sendVoiceReply(sock, from, result.reply);
+          if (!voiceSent) await brainExtra.reply(result.reply);
+        }
+
+      } catch (brainErr) {
+        await sock.sendPresenceUpdate('paused', from).catch(() => {});
+        if (brainErr.message === 'brain timeout') {
+          console.error(chalk.red('[BRAIN TIMEOUT]'), from);
+          if (toolRunner.hasPending(from)) {
+            await brainExtra.reply(`it's coming, just taking a sec — check in ${config.spam.duplicateCooldown}s`).catch(() => {});
+          } else {
+            await brainExtra.reply(`took too long on my end, try again in ${config.spam.duplicateCooldown}s`).catch(() => {});
+          }
+        } else {
+          console.error(chalk.red('[BRAIN ERROR]'), brainErr.message);
+          await brainExtra.reply(`something broke on my end, try again in ${config.spam.duplicateCooldown}s`).catch(() => {});
+        }
+      }
+
+      return;
+      // ── End AI Brain ────────────────────────────────────────────────────
     }
 
-    const isMentionTrigger = from.endsWith('@g.us') && botWasMentioned(sock, msg, body);
-    let args = [];
-    let commandName = '';
-    let wasPrefixCommand = false;
-    let bypassSudoForMention = false;
-    let downloadIdentifiedSong = false;
-
-    if (body.startsWith(config.prefix)) {
-      wasPrefixCommand = true;
-      args = body.slice(config.prefix.length).trim().split(/ +/);
-      commandName = args.shift()?.toLowerCase();
-    } else if (isMentionTrigger && hasVideoFindTarget(normalizedMsg)) {
-      commandName = 'find';
-      bypassSudoForMention = true;
-      downloadIdentifiedSong = true;
-    } else if (isMentionTrigger) {
-      const mentionText = stripBotMention(sock, body);
-      const mentionArgs = mentionText ? mentionText.split(/ +/) : [];
-      const possibleCommand = mentionArgs.shift()?.toLowerCase();
-      const possibleCmd = possibleCommand ? commands.get(possibleCommand) : null;
-      if (possibleCmd?.name === 'lyrics') {
-        commandName = possibleCommand;
-        args = mentionArgs;
-        bypassSudoForMention = true;
-      }
-    }
-
-    if (!commandName && isMentionTrigger) { console.log(chalk.gray('  ⧈ ') + chalk.cyan('MENTION') + chalk.gray(' ── ') + chalk.white(senderNum) + chalk.red(' NO ROUTE')); return; }
-    if (!commandName && wasPrefixCommand) { console.log(chalk.gray('  ⧈ ') + chalk.cyan('HANDLER') + chalk.gray(' ── ') + chalk.white(senderNum) + chalk.red(' EMPTY CMD')); return; }
-    if (!commandName) { console.log(chalk.gray('  ⧈ ') + chalk.cyan('HANDLER') + chalk.gray(' ── ') + chalk.white(senderNum) + chalk.red(' NO PREFIX')); return; }
+    const args        = body.slice(config.prefix.length).trim().split(/ +/);
+    const commandName = args.shift()?.toLowerCase();
+    if (!commandName) { console.log(chalk.gray('  ⧈ ') + chalk.cyan('HANDLER') + chalk.gray(' ── ') + chalk.white(senderNum) + chalk.red(' EMPTY CMD')); return; }
 
     const cmd = commands.get(commandName);
     if (!cmd) { console.log(chalk.gray('  ⧈ ') + chalk.cyan('HANDLER') + chalk.gray(' ── ') + chalk.white(senderNum) + chalk.red(' UNKNOWN ') + chalk.gray(commandName)); return; }
 
-    const pushName = msg.pushName || '';
-
-    // `sender` already arrives as a clean phone-number JID (the global
-    // cleanser in index.js runs before handleMessage is ever called), but
-    // we resolve defensively here too in case this is ever invoked from
-    // somewhere that skipped the cleanser - an owner-only command must
-    // never refuse to fire just because it saw a raw LID.
     if (sender.endsWith('@lid')) {
       const resolved = await resolvePhoneJid(sock, sender);
       if (resolved !== sender) {
@@ -463,28 +540,19 @@ async function handleMessage(sock, msg) {
       }
     }
 
-    const isGroup = from.endsWith('@g.us');
+    const isGroup     = from.endsWith('@g.us');
     const isOwnerUser = isOwner(sender, pushName);
-
-    if (!shiftGate.isActive(commandName, isOwnerUser)) {
-      console.log(chalk.gray('  ⧈ ') + chalk.cyan('SHIFT') + chalk.gray(' ── ') + chalk.white(commandName) + chalk.yellow(' ignored outside active hours'));
-      return;
-    }
 
     if (isGroup) {
       const allowedCommands = database.getAllowedCommandsForGroup(from);
-      const isSudoCommand = commandName === 'sudo' || commandName === 'sallow';
-      const isSudoAllowed = allowedCommands.includes('*') || allowedCommands.includes(commandName);
+      const isSudoCommand   = commandName === 'sudo' || commandName === 'sallow';
+      const isSudoAllowed   = allowedCommands.includes('*') || allowedCommands.includes(commandName);
       if (isSudoCommand) {
         if (!isOwnerUser) { console.log(chalk.gray('  ⧈ ') + chalk.cyan('SUDO') + chalk.gray(' ── ') + chalk.white(senderNum) + chalk.red(' DENIED')); return; }
-      } else if (!isSudoAllowed && !bypassSudoForMention) {
+      } else if (!isSudoAllowed) {
         console.log(chalk.gray('  ⧈ ') + chalk.cyan('PERM') + chalk.gray(' ── ') + chalk.white(senderNum) + chalk.red(' NOT ALLOWED ') + chalk.gray(commandName));
         return;
       }
-      // Generic owner-gate: a command flagged ownerOnly must NEVER run for a
-      // non-owner, even if it's somehow present in a group's sudo allow-list
-      // (e.g. via "*" or an explicit allow). This matters most for commands
-      // like `update` that can overwrite the entire codebase.
       if (cmd.ownerOnly && !isOwnerUser) {
         console.log(chalk.gray('  ⧈ ') + chalk.cyan('OWNER') + chalk.gray(' ── ') + chalk.white(senderNum) + chalk.red(' DENIED ') + chalk.gray(commandName));
         return sock.sendMessage(from, { text: config.messages.ownerOnly }, { quoted: msg });
@@ -504,19 +572,11 @@ async function handleMessage(sock, msg) {
         }
       }
     } else {
-      const currentMode = getMode();
-      if (currentMode === 'owner' && !isOwnerUser) {
-        console.log(chalk.gray('  ⧈ ') + chalk.cyan('MODE') + chalk.gray(' ── ') + chalk.white(senderNum) + chalk.red(' OWNER-ONLY DM ') + chalk.gray(commandName));
-        return sock.sendMessage(from, { text: '⫎ Bot is in *Owner mode* — only the bot owner can use commands in DM.' }, { quoted: msg });
-      }
+      if (!isOwnerUser) { console.log(chalk.gray('  ⧈ ') + chalk.cyan('PERM') + chalk.gray(' ── ') + chalk.white(senderNum) + chalk.red(' DM BLOCKED (not owner)')); return; }
     }
 
     const extra = {
-      from,
-      sender,
-      pushName,
-      isMentionTrigger,
-      downloadIdentifiedSong,
+      from, sender, pushName,
       getCommands: () => commands,
       reply: async (text, extraContent) => {
         await sock.sendMessage(from, { text: String(text), ...(extraContent || {}) }, { quoted: msg });
@@ -540,16 +600,14 @@ async function handleMessage(sock, msg) {
       }
 
       if (gSettings.antispam) {
-        const now = Date.now();
-        const cmdKey = `${sender}:${commandName}:${args.join(' ')}`;
+        const now     = Date.now();
+        const cmdKey  = `${sender}:${commandName}:${args.join(' ')}`;
         const windowMin = Math.round(config.spam.perUserWindow / 60);
 
         const warnData = spamTracker.warnings.get(sender);
         if (warnData && warnData.mutedUntil && now < warnData.mutedUntil) {
-          const remainingSec = Math.ceil((warnData.mutedUntil - now) / 1000);
-          const remainingLabel = remainingSec >= 60
-            ? `${Math.ceil(remainingSec / 60)} min`
-            : `${remainingSec}s`;
+          const remainingSec   = Math.ceil((warnData.mutedUntil - now) / 1000);
+          const remainingLabel = remainingSec >= 60 ? `${Math.ceil(remainingSec / 60)} min` : `${remainingSec}s`;
           return extra.reply(
             `⫎@${sender.split('@')[0]} - YOU ARE MUTED ⏳⧯\n\n` +
             `You went over the command limit too many times, so I'm ignoring your commands for ${remainingLabel} more. ` +
@@ -570,11 +628,12 @@ async function handleMessage(sock, msg) {
           );
         }
 
-        const userTimes = spamTracker.userHistory.get(sender) || [];
+        const userTimes  = spamTracker.userHistory.get(sender) || [];
         const recentUser = userTimes.filter(t => now - t < config.spam.perUserWindow * 1000);
         if (recentUser.length >= config.spam.perUserLimit) {
           const warnings = spamTracker.warnings.get(sender) || { count: 0, mutedUntil: 0 };
           warnings.count += 1;
+          warnings.updatedAt = now;
           if (warnings.count >= config.spam.maxWarnings) {
             warnings.mutedUntil = now + 5 * 60 * 1000;
             spamTracker.warnings.set(sender, warnings);
@@ -585,6 +644,7 @@ async function handleMessage(sock, msg) {
               { mentions: [sender] }
             );
           }
+          warnings.updatedAt = now;
           spamTracker.warnings.set(sender, warnings);
           return extra.reply(
             `⫎🐢 @${sender.split('@')[0]} - SLOW DOWN! WARNING ${warnings.count}/${config.spam.maxWarnings} ⏳⧯\n\n` +
@@ -608,6 +668,7 @@ async function handleMessage(sock, msg) {
     console.log(chalk.gray('  ⧈ ') + chalk.green('EXEC') + chalk.gray(' ── ') + chalk.white(senderNum) + chalk.gray(' ') + chalk.yellowBright(commandName) + chalk.gray(' args=') + chalk.white(JSON.stringify(args)));
     await cmd.execute(sock, msg, args, extra);
     console.log(chalk.gray('  ⧈ ') + chalk.green('DONE') + chalk.gray(' ── ') + chalk.white(senderNum) + chalk.gray(' ') + chalk.yellowBright(commandName));
+
   } catch (err) {
     console.error(chalk.gray('  ⧈ ') + chalk.red('ERR') + chalk.gray(' ── ') + chalk.white(senderNum) + chalk.red(' ' + err.message));
   }
@@ -618,12 +679,6 @@ async function handleAntilink(sock, msg, groupMetadata) {
     const from = msg.key?.remoteJid;
     if (!from || !from.endsWith('@g.us')) { console.log('[ANTILINK] not group'); return; }
 
-    // Never moderate the bot's own account. This account IS the owner, so
-    // a link the owner posts from their own phone must never get deleted
-    // or - worse - get the owner kicked from their own group by their own bot.
-    // We check BOTH fromMe (the bot's own connected device) and isOwner()
-    // (the owner's number, possibly messaging from a *different* linked
-    // device where fromMe is false) - either one is enough to exempt them.
     const linkSender = msg.key.participant || msg.key.remoteJid;
     if (msg.key?.fromMe || isOwner(linkSender, msg.pushName)) {
       console.log('[ANTILINK] owner/fromMe - skipped');
@@ -645,12 +700,12 @@ async function handleAntilink(sock, msg, groupMetadata) {
     if (!linkRegex.test(body)) { console.log('[ANTILINK] no link match. body=' + body.slice(0, 60)); return; }
 
     const sender = linkSender;
-    let isGroupAdmin = false;
+    let isGroupAdminFlag = false;
     for (const p of (groupMetadata.participants || [])) {
       if (p.admin !== 'admin' && p.admin !== 'superadmin') continue;
-      if (await participantMatches(sock, p.id, sender)) { isGroupAdmin = true; break; }
+      if (await participantMatches(sock, p.id, sender)) { isGroupAdminFlag = true; break; }
     }
-    if (isGroupAdmin) { console.log('[ANTILINK] sender is admin'); return; }
+    if (isGroupAdminFlag) { console.log('[ANTILINK] sender is admin'); return; }
 
     const action = settings.antilinkAction || 'delete';
     console.log('[ANTILINK] executing action=' + action + ' for sender=' + sender);
@@ -659,20 +714,18 @@ async function handleAntilink(sock, msg, groupMetadata) {
       await sock.sendMessage(from, { delete: msg.key });
       await sock.sendMessage(from, {
         text: `⫎@${sender.split('@')[0]} - LINK REMOVED 🔗🚫⧯\n\n` +
-          `This group has *antilink* enabled, which auto-deletes messages containing links (invite links, shortened URLs, etc) from non-admins. ` +
+          `This group has *antilink* enabled, which auto-deletes messages containing links from non-admins. ` +
           `Group admins are exempt. Ask an admin to turn it off with *.antilink off* if you need to share a link.`,
         mentions: [sender]
       });
-      console.log('[ANTILINK] delete sent');
     } else if (action === 'kick') {
       await sock.groupParticipantsUpdate(from, [sender], 'remove');
       await sock.sendMessage(from, {
         text: `⫎@${sender.split('@')[0]} - REMOVED FOR POSTING A LINK 🔗🚫⧯\n\n` +
-          `This group has *antilink* set to kick: posting a link as a non-admin gets you removed automatically, no warning. ` +
-          `Admins can change this to a gentler "delete only" mode with *.antilink delete*.`,
+          `This group has *antilink* set to kick: posting a link as a non-admin gets you removed automatically. ` +
+          `Admins can change this with *.antilink delete*.`,
         mentions: [sender]
       });
-      console.log('[ANTILINK] kick sent');
     }
   } catch (err) {
     console.error('[HANDLER] handleAntilink error:', err.message);
@@ -684,9 +737,6 @@ async function handleAntiword(sock, msg, groupMetadata) {
     const from = msg.key?.remoteJid;
     if (!from || !from.endsWith('@g.us')) return;
 
-    // Never moderate the bot's own account - see handleAntilink for why.
-    // Checks fromMe AND isOwner() so the owner is protected even when
-    // messaging from a second linked device (fromMe false in that case).
     const wordSender = msg.key.participant || msg.key.remoteJid;
     if (msg.key?.fromMe || isOwner(wordSender, msg.pushName)) return;
 
@@ -705,12 +755,12 @@ async function handleAntiword(sock, msg, groupMetadata) {
     if (!badWordRegex.test(normalized)) return;
 
     const sender = wordSender;
-    let isGroupAdmin = false;
+    let isGroupAdminFlag = false;
     for (const p of (groupMetadata.participants || [])) {
       if (p.admin !== 'admin' && p.admin !== 'superadmin') continue;
-      if (await participantMatches(sock, p.id, sender)) { isGroupAdmin = true; break; }
+      if (await participantMatches(sock, p.id, sender)) { isGroupAdminFlag = true; break; }
     }
-    if (isGroupAdmin) return;
+    if (isGroupAdminFlag) return;
 
     const action = settings.antiwordAction || 'delete';
 
@@ -718,16 +768,15 @@ async function handleAntiword(sock, msg, groupMetadata) {
       await sock.sendMessage(from, { delete: msg.key });
       await sock.sendMessage(from, {
         text: `⫎@${sender.split('@')[0]} - MESSAGE REMOVED 🤬🚫⧯\n\n` +
-          `This group has *antiword* enabled, which auto-deletes messages containing words on the blocked list, even disguised with numbers/symbols (e.g. "sh1t"). ` +
-          `Group admins are exempt. If this was a false positive, ask an admin - they manage the word list with *.antiword*.`,
+          `This group has *antiword* enabled. Group admins are exempt. ` +
+          `If this was a false positive, ask an admin - they manage the word list with *.antiword*.`,
         mentions: [sender]
       });
     } else if (action === 'kick') {
       await sock.groupParticipantsUpdate(from, [sender], 'remove');
       await sock.sendMessage(from, {
         text: `⫎@${sender.split('@')[0]} - REMOVED FOR A BLOCKED WORD 🤬🚫⧯\n\n` +
-          `This group has *antiword* set to kick: using a word on the blocked list as a non-admin gets you removed automatically, no warning. ` +
-          `Admins can change this to a gentler "delete only" mode with *.antiword delete*.`,
+          `This group has *antiword* set to kick. Admins can change this with *.antiword delete*.`,
         mentions: [sender]
       });
     }
@@ -741,11 +790,11 @@ async function handleGroupUpdate(sock, update) {
     const { id: jid, participants, action } = update;
     if (!jid || !participants) return;
 
-    const settings = database.getGroupSettings(jid);
+    const settings      = database.getGroupSettings(jid);
     const groupMetadata = await sock.groupMetadata(jid);
-    const groupName = groupMetadata.subject || 'Group';
-    const groupDesc = groupMetadata.desc || '';
-    const memberCount = groupMetadata.participants?.length || 0;
+    const groupName     = groupMetadata.subject || 'Group';
+    const groupDesc     = groupMetadata.desc || '';
+    const memberCount   = groupMetadata.participants?.length || 0;
 
     if (action === 'add' && settings.welcome) {
       for (const rawParticipant of participants) {
@@ -757,10 +806,7 @@ async function handleGroupUpdate(sock, update) {
           .replace(/groupDesc/g, groupDesc)
           .replace(/#memberCount/g, memberCount)
           .replace(/time/g, new Date().toLocaleString());
-        await sock.sendMessage(jid, {
-          text: msg,
-          mentions: [participant],
-        });
+        await sock.sendMessage(jid, { text: msg, mentions: [participant] });
       }
     }
 
@@ -769,10 +815,7 @@ async function handleGroupUpdate(sock, update) {
         const participant = await resolvePhoneJid(sock, rawParticipant);
         const user = cleanNumber(participant);
         let msg = settings.goodbyeMessage.replace(/@user/g, `@${user}`);
-        await sock.sendMessage(jid, {
-          text: msg,
-          mentions: [participant],
-        });
+        await sock.sendMessage(jid, { text: msg, mentions: [participant] });
       }
     }
   } catch (err) {
@@ -795,4 +838,5 @@ module.exports = {
   handleGroupUpdate,
   getGroupMetadata,
   getCommands: () => commands,
+  checkIn,
 };

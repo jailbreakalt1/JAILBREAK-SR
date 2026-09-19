@@ -6,8 +6,7 @@
     "type": "commonjs",
     "scripts": {
         "start": "node index.js",
-        "dev": "nodemon index.js",
-        "postinstall": "node tools/fix-yt-search.js"
+        "dev": "nodemon index.js"
     },
     "keywords": [
         "whatsapp bot",
@@ -18,16 +17,16 @@
     "author": "JAILBREAK",
     "license": "MIT",
     "dependencies": {
-        "@ryuu-reinzz/button-helper": "^2.2.3",
-        "@whiskeysockets/baileys": "^7.0.0-rc13",
+        "@whiskeysockets/baileys": "^7.0.0-rc.9",
         "acrcloud": "^1.4.0",
-        "axios": "^1.19.0",
-        "baileys": "npm:@whiskeysockets/baileys@7.0.0-rc14",
+        "axios": "^1.7.2",
         "chalk": "^4.1.2",
+        "edge-tts-universal": "^1.4.0",
         "moment-timezone": "^0.5.45",
+        "openai": "^4.68.0",
         "pino": "^9.0.0",
         "qrcode-terminal": "^0.12.0",
-        "youtubei.js": "^17.2.0",
+        "ruhend-scraper": "*",
         "yt-search": "^2.13.1"
     },
     "devDependencies": {

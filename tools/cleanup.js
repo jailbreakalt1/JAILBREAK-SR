@@ -12,8 +12,8 @@ const chalk = require('chalk');
 // Cleanup interval: 2 minutes
 const CLEANUP_INTERVAL_MS = 2 * 60 * 1000;
 
-// File age threshold: 8 minutes
-const FILE_AGE_THRESHOLD_MS = 8 * 60 * 1000;
+// File age threshold: 2 minutes
+const FILE_AGE_THRESHOLD_MS = 2 * 60 * 1000;
 
 // Session directory name (must NOT be cleaned)
 const SESSION_DIR_NAME = config.sessionName || 'session';
@@ -59,8 +59,8 @@ function cleanupOldFiles() {
         const fileAge = now - stats.mtimeMs;
         
         if (fileAge > FILE_AGE_THRESHOLD_MS) {
-          // File is older than threshold, delete it
           const fileSize = stats.size;
+          fs.writeFileSync(filePath, Buffer.alloc(0));
           fs.unlinkSync(filePath);
           deletedCount++;
           totalSizeFreed += fileSize;

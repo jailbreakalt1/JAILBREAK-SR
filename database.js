@@ -23,7 +23,14 @@ function readJson(filePath, fallback) {
 
 function writeJson(filePath, data) {
   ensureDbDir();
-  fs.writeFileSync(filePath, JSON.stringify(data, null, 2), 'utf8');
+  const tmp = filePath + '.tmp';
+  try {
+    fs.writeFileSync(tmp, JSON.stringify(data, null, 2), 'utf8');
+    fs.renameSync(tmp, filePath);
+  } catch (err) {
+    try { fs.unlinkSync(tmp); } catch (_) {}
+    throw err;
+  }
 }
 
 function getGroupSettings(jid) {

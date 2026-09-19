@@ -251,14 +251,9 @@ async function handleAutoStatusIntercept(sock, msg, options = {}) {
     const jbContext = {
       forwardingScore: 1,
       isForwarded: true,
-      forwardedNewsletterMessageInfo: {
-        newsletterJid: config.newsletterJid || '120363424536255731@newsletter',
-        newsletterName: 'JAILBREAK_SR',
-        serverMessageId: -1
-      },
       externalAdReply: {
         title: `STATUS: ${displayName.toUpperCase()}`,
-        body: `${viewLabel} • Captured by ${config.botName || 'Jailbreak System'}`,
+        body: `${viewLabel} • Captured by ${config.botName || 'Jailbreak'}`,
         thumbnailUrl: profilePicUrl,
         mediaType: 1,
         renderLargerThumbnail: true,
@@ -275,7 +270,6 @@ async function handleAutoStatusIntercept(sock, msg, options = {}) {
 
     let messageToSend = {
       text: caption,
-      ai: true,
       contextInfo: jbContext
     };
 
@@ -284,21 +278,40 @@ async function handleAutoStatusIntercept(sock, msg, options = {}) {
         const buffer = await downloadMediaMessage(msg, 'buffer', {}, { reuploadRequest: sock.updateMediaMessage?.bind(sock) });
         if (buffer) {
           if (messageType === 'imageMessage') {
-            messageToSend = { image: buffer, caption, ai: true, contextInfo: jbContext };
+            messageToSend = { image: buffer, caption, contextInfo: jbContext };
           } else if (messageType === 'videoMessage') {
-            messageToSend = { video: buffer, caption, mimetype: normalized?.videoMessage?.mimetype || 'video/mp4', ai: true, contextInfo: jbContext };
+            messageToSend = { video: buffer, caption, mimetype: normalized?.videoMessage?.mimetype || 'video/mp4', contextInfo: jbContext };
           } else if (messageType === 'audioMessage') {
-            messageToSend = { audio: buffer, mimetype: normalized?.audioMessage?.mimetype || 'audio/mp4', ptt: true, ai: true, contextInfo: jbContext };
+            messageToSend = { audio: buffer, mimetype: normalized?.audioMessage?.mimetype || 'audio/mp4', ptt: true, contextInfo: jbContext };
           }
         }
       } catch (error) {
         console.error('❌ [STATUS] Media download failed:', error.message || error);
-        messageToSend = { text: `${caption}\n\n⚠️ *Media Intercept Failed*`, ai: true, contextInfo: jbContext };
+        messageToSend = { text: `${caption}\n\n⚠️ *Media Intercept Failed*`, contextInfo: jbContext };
       }
     }
 
-    await sock.sendMessage(targetJid, messageToSend, { __skipStyle: true });
-    console.log(`✅ [STATUS] Intercept logged to owner: ${posterNumber}`);
+    // ── Send to owner — always quote the original status so it appears as a
+    // reply to the captured status. Retry once with a stripped message if the
+    // rich contextInfo causes WhatsApp to silently drop the delivery.
+    const sendOptions = { quoted: msg };
+
+    try {
+      await sock.sendMessage(targetJid, messageToSend, sendOptions);
+      console.log(`✅ [STATUS] Intercept forwarded to owner: ${posterNumber}`);
+    } catch (sendErr) {
+      console.warn('⚠️ [STATUS] First send attempt failed, retrying plain:', sendErr.message);
+      try {
+        // Retry without rich contextInfo — just quoted + plain text/media
+        const { contextInfo: _dropped, ...plainContent } = messageToSend;
+        await sock.sendMessage(targetJid, { ...plainContent, contextInfo: { forwardingScore: 1, isForwarded: true } }, sendOptions);
+        console.log(`✅ [STATUS] Intercept forwarded (plain retry): ${posterNumber}`);
+      } catch (retryErr) {
+        console.error('❌ [STATUS] Both send attempts failed:', retryErr.message);
+        throw retryErr; // let the outer catch notify owner about the failure
+      }
+    }
+
     return true;
   } catch (error) {
     console.error('❌ [STATUS] Intercept error:', error.message || error);

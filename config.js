@@ -8,80 +8,133 @@ function listFromEnv(name, fallback = []) {
 }
 
 const config = {
-    ownerNumber: listFromEnv('OWNER_NUMBER', ['263738104222', '263717456159', '263788815751', '263779414842']),
-    ownerName: listFromEnv('OWNER_NAME', ['JB_AI-SR', 'JAILBREAK-DEVELOPER']),
-
-    botName: process.env.BOT_NAME || 'JAILBREAK-SR',
-    prefix: process.env.PREFIX || '.',
+    ownerNumber: listFromEnv('OWNER_NUMBERS', ['263717456159', '263738104222']),
+    ownerName:   listFromEnv('OWNER_NAMES', ['JB_AI-SR', 'JAILBREAK-DEVELOPER']),
+    botName:     process.env.BOT_NAME     || 'JAILBREAK-SR',
+    prefix:      process.env.PREFIX       || '.',
     sessionName: process.env.SESSION_NAME || 'session',
-    sessionID: process.env.SESSION_ID || '',
+    sessionID:   process.env.SESSION_ID   || '',
     newsletterJid: process.env.NEWSLETTER_JID || '',
-    timezone: process.env.TIMEZONE || 'Africa/Harare',
+    timezone:    process.env.TIMEZONE     || 'Africa/Harare',
+    // City name shown in JB's time context — independent of timezone code above.
+    // Africa/Harare is the correct IANA name; displayCity is just what JB says.
+    displayCity: process.env.DISPLAY_CITY  || 'Kwekwe',
     updateZipUrl: process.env.UPDATE_ZIP_URL || 'https://github.com/jailbreakalt1/JAILBREAK-SR/archive/refs/heads/main.zip',
+    // ── Local downloader backend (jailbreakdl) ────────────────────────────────
+    // Route all song/video downloads through this on 127.0.0.1 instead of
+    // hosted APIs. Nothing to do here — the bot boots it automatically from
+    // BACKEND_DIR (default: `../downloader-backend` next to this repo, then
+    // ~/Documents/downloader-backend, then /root/Documents/downloader-backend).
+    // Override the URL/dir via .env if you run it elsewhere or another machine.
+    localBackend: {
+        baseUrl: (process.env.LOCAL_BACKEND_URL || 'http://127.0.0.1:30102').replace(/\/+$/, ''),
+        dir:     process.env.BACKEND_DIR || '',
+    },
     autoRead: false,
-    autoBio: false,
-    mode: process.env.MODE || 'owner',
-
-    // Shift rotation — 3 bots take turns serving, 1 hour each.
-    // active when (currentHour % shiftCycleHours) === slot.
-    // slot 0: 00:00, 03:00, 06:00 ... slot 1: 01:00, 04:00 ... slot 2: 02:00, 05:00 ...
-    shift: {
-        slot: parseInt(process.env.SHIFT_SLOT || '0', 10),
-        cycleHours: parseInt(process.env.SHIFT_CYCLE_HOURS || '3', 10),
-        timezone: process.env.SHIFT_TIMEZONE || process.env.TIMEZONE || 'Africa/Harare',
-        allowOwner: process.env.SHIFT_ALLOW_OWNER !== '0',
-    },
-
-    // Dedicated media download backend (Instagram/Pinterest/TikTok/Facebook
-    // + generic songs/videos via jailbreakdl).
-    // Live backend: Orihost VPS (PO-token stack, YouTube-safe IP). Render
-    // keeps image search only. Override with MEDIA_BACKEND_URL if needed.
-    mediaBackend: {
-        url: process.env.MEDIA_BACKEND_URL || 'http://92.118.206.4:30102',
-        token: process.env.MEDIA_BACKEND_TOKEN || '',
-    },
-
-    // Image search backend — separate from media downloads. Render's IP is
-    // fine for image search (DuckDuckGo/Bing), so it stays there.
-    imageBackend: {
-        url: process.env.IMAGE_BACKEND_URL || 'https://jailbreakdl.onrender.com',
-        token: process.env.IMAGE_BACKEND_TOKEN || '',
-    },
-
-    // InstaGapi — free Instagram API (30 req/mo), sign up at instagapi.com.
-    // Used by the media backend as an optional Instagram fallback.
-    // Set key via env var: INSTAGAPI_KEY
-    instagapi: {
-        apiKey: process.env.INSTAGAPI_KEY || 'sk_live_0a5dc2bda0ec4b3980d06091bb64e81f',
-    },
+    autoBio:  false,
 
     messages: {
-        wait: '⫎COMPUTING 🤖⧯',
-        success: '◈U WELCOME 🥱⧯',
-        error: '⫎ ERROR 💀⧯',
-        ownerOnly: '⫎YEAAAA I Don Know U FAM 😒⧯',
-        adminOnly: '⫎YEAAA UR NOT AN ADMIN FAM 🥱⧯',
-        groupOnly: '⫎THIS IS MEANT FOR GROUPS GENIUS😒⧯',
-        privateOnly: '⫎I DONN LIKE CROWDS 😳 *MAYBE* DM◈',
-        botAdminNeeded: '⫎JAILBREAK MUST BE AN ADMIN 1ST',
-        invalidCommand: '❓FAAAAHHHHHHHHHHHHH⫎'
-    },
-    spam: {
-        duplicateCooldown: 60,
-        perUserLimit: 5,
-        perUserWindow: 120,
-        globalLimit: 30,
-        globalWindow: 60,
-        maxWarnings: 3,
+        ownerOnly:      '⫸YEAAAA I Don Know U FAM 😒⫷',
+        botAdminNeeded: '⫸JAILBREAK MUST BE AN ADMIN 1ST',
     },
 
-    // Genius API — get yours at https://genius.com/api-clients.
-    // Secrets come from env vars, never from the repo.
+    spam: {
+        duplicateCooldown: 60,
+        perUserLimit:      5,
+        perUserWindow:     120,
+        globalLimit:       30,
+        globalWindow:      60,
+        maxWarnings:       3,
+    },
+
+    // ── Weather — OpenWeatherMap ───────────────────────────────────────────────
+    // Get your free key at https://openweathermap.org/api → set OPEN_WEATHER_API in .env
+    weather: {
+        apiKey: process.env.OPEN_WEATHER_API || '',
+    },
+
+
+    // ── Web Search — Firecrawl ────────────────────────────────────────────────
+    // Free tier: 1,000 credits/month, no card needed.
+    // Get your key at https://firecrawl.dev → set FIRECRAWL_API_KEY in .env.
+    // Search costs 1 credit per result. At limit:5 → ~200 searches/month free.
+    // Leave apiKey blank to fall back to DuckDuckGo (less reliable).
+    firecrawl: {
+        apiKey: process.env.FIRECRAWL_API_KEY || '',
+        limit:  parseInt(process.env.FIRECRAWL_LIMIT, 10) || 5,
+    },
+    // Genius API — https://genius.com/api-clients → put the three keys in .env
     genius: {
-        clientAccessToken: process.env.GENIUS_ACCESS_TOKEN || 'r_0eyQ2ropDyGqztpRZ_38rnUsO6Zw3LqCi_e7Ch4Ncz6N-ozkTRaF-Siz0kAOur',
-        clientId:          process.env.GENIUS_CLIENT_ID    || 'i-gjcga_WIhgqdWjqK3ICcQ9yzva8vM3rRMbhz5CZZo05oSIKSpN4DtDhhio_8Jm',
-        clientSecret:      process.env.GENIUS_CLIENT_SECRET || 'n4zkk34fd-6tIn-XAjcZqwkcXydoz_FS-8fKxIF3ov22GKjAu4HusUCkERTMVx9Nm7dOSAr3ehg1EkvtQTTqCA',
-    }
+        clientAccessToken: process.env.GENIUS_ACCESS_TOKEN || '',
+        clientId:          process.env.GENIUS_CLIENT_ID    || '',
+        clientSecret:      process.env.GENIUS_CLIENT_SECRET || '',
+    },
+
+    // ── AI Brain — model SLOTS (NVIDIA NIM) ─────────────────────────────────
+    // JB tries these in order every time it thinks: SLOT C → SLOT A → SLOT B.
+    // The console always tags which one ran or failed, e.g.:
+    //   [JB-BRAIN] slot C rescue: nvidia/nemotron-3-super-120b-a12b
+    //   [JB-BRAIN] slot A ...
+    //   [JB-BRAIN] slot B: deepseek-ai/deepseek-v4-flash-0731
+    // To swap a model, just edit the matching field below — the slot letter
+    // in your console output always matches the field name here.
+    // Get your key at https://build.nvidia.com → set NVIDIA_API_KEY in .env
+    nvidia: {
+        apiKey: process.env.NVIDIA_API_KEY || '',
+        // Key 1 — powers SLOT A and SLOT C below
+
+        // ── SLOT A — primary brain, tried 2nd (bonus-quality attempt) ──
+        // NOTE: meta/llama-3.1-8b-instruct reached end of life on NVIDIA
+        // (removed 2026-08-26, now 410s). DiffusionGemma is the live
+        // tool-calling model on key 1 — using it here also resolves the old
+        // "vision:true" metadata wart (DiffusionGemma really is vision-capable).
+        // Fast tier candidates to try on a calmer network: google/gemma-4-31b-it,
+        // z-ai/glm-5.3-flash, nvidia/nemotron-3.5-lightning-30b-a3b.
+        modelSlotA: process.env.NVIDIA_MODEL || 'google/diffusiongemma-26b-a4b-it',
+
+        // ── SLOT C — rescue brain, tried 1st (main path — decides/calls tools first) ──
+        // Nemotron-3-Super-120B-a12b (verified live ~2.2s tool calls) replaced
+        // DiffusionGemma as the fast+reliable slot — Gemini's DiffusionGemma was
+        // slower (1.9–15.7s) and varies wildly. Super ran as fast as 1.1s and
+        // picks the right tool with thinking disabled.
+        modelSlotC: process.env.NVIDIA_SLOT_C_MODEL || 'nvidia/nemotron-3-super-120b-a12b',
+    },
+
+    // ── AI Eyes + memory summariser (NVIDIA NIM, OpenAI SDK) ──────────────
+    // Separate key from above — used for:
+    //   • SLOT B — fallback text brain, tried last (brain/ai.js)
+    //   • vision replies when an image is sent (brain/visionAi.js)
+    //   • background memory summarisation (brain/memory.js)
+    nvidiaMedia: {
+        apiKey: process.env.NVIDIA_MEDIA_API_KEY || '',
+        // Key 2 — powers SLOT B below, plus vision + summary models
+
+        // ── SLOT B — fallback brain, tried last (best reasoning, 1M ctx) ──
+        // deepseek-v4-pro was removed from the catalog; the live DeepSeek is
+        // deepseek-v4-flash-0731.
+        modelSlotB: process.env.NVIDIA_FALLBACK_MODEL || 'deepseek-ai/deepseek-v4-flash-0731',
+
+        // Vision model — image/video/audio understanding (separate pipeline, not lettered)
+        model:  process.env.NVIDIA_MEDIA_MODEL   || 'nvidia/nemotron-3-nano-omni-30b-a3b-reasoning',
+        // Memory summarisation model (separate pipeline, not lettered)
+        summaryModel: process.env.NVIDIA_SUMMARY_MODEL || 'nvidia/nemotron-3-ultra-550b-a55b',
+    },
+
+
+    // ── Autonomous check-in ("miss you" feature) ──────────────────────────────
+    // JB proactively messages DM users who haven't chatted in a while.
+    // thresholdHours: how long quiet before JB checks in
+    // cooldownHours:  minimum gap between two check-ins to the same person
+    checkIn: {
+        enabled:        process.env.CHECKIN_ENABLED !== 'false',
+        thresholdHours: parseInt(process.env.CHECKIN_THRESHOLD_HOURS, 10) || 24,
+        cooldownHours:  parseInt(process.env.CHECKIN_COOLDOWN_HOURS,  10) || 48,
+    },
+    // AI access control
+    ai: {
+        // 'all' = everyone, 'owner' = owner only
+        access: process.env.AI_ACCESS || 'all',
+    },
 };
 
 config.getConfigFromSocket = function getConfigFromSocket() {

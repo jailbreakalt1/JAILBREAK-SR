@@ -2,21 +2,10 @@ process.env.PUPPETEER_SKIP_DOWNLOAD = 'true';
 process.env.PUPPETEER_SKIP_CHROMIUM_DOWNLOAD = 'true';
 process.env.PUPPETEER_CACHE_DIR = process.env.PUPPETEER_CACHE_DIR || '/tmp/puppeteer_cache_disabled';
 
-// Load the ignored container-local env file before config.js is imported.
-// Existing panel-provided environment variables take precedence.
-const startupEnvPath = require('path').join(process.cwd(), '.env');
-try {
-  const startupEnv = require('fs').readFileSync(startupEnvPath, 'utf8');
-  for (const line of startupEnv.split(/\r?\n/)) {
-    const trimmed = line.trim();
-    if (!trimmed || trimmed.startsWith('#')) continue;
-    const match = trimmed.match(/^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/);
-    if (!match || process.env[match[1]] !== undefined) continue;
-    process.env[match[1]] = match[2].replace(/^(['"])(.*)\1$/, '$2');
-  }
-} catch {
-  // .env is optional when running locally or through a panel environment.
-}
+// Self-host friendly: load .env BEFORE any module reads process.env, so a
+// fresh git clone only needs `cp .env.example .env` + edit keys — no shell env.
+const { loadDotEnv } = require('./tools/dotEnv');
+loadDotEnv();
 
 const { initializeTempSystem } = require('./tools/tempManager');
 const { startCleanup } = require('./tools/cleanup');
@@ -241,6 +230,11 @@ async function startBot() {
   const { state, saveCreds } = await useMultiFileAuthState(sessionFolder);
   const { version } = await fetchLatestBaileysVersion();
 
+  // Local downloader backend (jailbreakdl) — start it if it isn't already up,
+  // so songs/videos route to 127.0.0.1 instead of hosted APIs.
+  const { ensureLocalBackend } = require('./tools/ensureBackend');
+  await ensureLocalBackend();
+
   // Use suppressed logger for socket
   const suppressedLogger = createSuppressedLogger('silent');
 
@@ -273,11 +267,19 @@ async function startBot() {
 
   // Check every 5 min
   const watchdogInterval = setInterval(async () => {
-    if (Date.now() - lastActivity > INACTIVITY_TIMEOUT && sock.ws.readyState === 1) { // WebSocket open but inactive
-      console.log('⚠️ No activity detected. Forcing reconnect...');
-      await sock.end(undefined, undefined, { reason: 'inactive' });
-      clearInterval(watchdogInterval);
-      setTimeout(() => startBot(), 5000); // Slightly longer delay
+    try {
+      if (Date.now() - lastActivity > INACTIVITY_TIMEOUT && sock.ws.readyState === 1) { // WebSocket open but inactive
+        console.log('⚠️ No activity detected. Forcing reconnect...');
+        await sock.end(undefined, undefined, { reason: 'inactive' });
+        clearInterval(watchdogInterval);
+        setTimeout(() => startBot(), 5000); // Slightly longer delay
+      }
+    } catch (watchdogErr) {
+      console.error('⚠️ Watchdog error:', watchdogErr.message);
+      if (Date.now() - lastActivity > INACTIVITY_TIMEOUT) {
+        clearInterval(watchdogInterval);
+        setTimeout(() => startBot(), 5000);
+      }
     }
   }, 5 * 60 * 1000); // Every 5 min check
 

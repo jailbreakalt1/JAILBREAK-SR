@@ -2,6 +2,27 @@
 
 A feature-rich WhatsApp bot built with Baileys, featuring song/video/image downloads, group management, and distributed job processing via Jailbreak Orchestrator.
 
+## Self-host (Termux / old phone / any box)
+
+No shell environment or hosted services needed — a bare clone works:
+
+```bash
+git clone https://github.com/jailbreakalt1/JAILBREAK-SR.git
+cd JAILBREAK-SR
+npm i
+cp .env.example .env      # paste your own API keys
+npm start
+```
+
+Config is loaded automatically from `.env` at boot (`tools/dotEnv.js`) before
+anything reads `process.env`, so nothing to export. `.env` is gitignored.
+
+Media downloads route through the local **jailbreakdl** backend
+(`git clone https://github.com/jailbreakalt1/downloader-backend`), which the
+bot boots automatically on first start (`LOCAL_BACKEND_URL`,
+`BACKEND_DIR` in `.env`). If it can't come up, the bot falls back to its own
+yt-dlp.
+
 ## Features
 
 - **Song Download** (`.song`, `.play`, `.music`) — Search YouTube, download MP3 via distributed workers
