@@ -52,6 +52,12 @@ else
   say "node_modules up to date (skipping npm install)"
 fi
 
+# ── 2c. downloader-backend is its own sub-project — install its deps too ──
+if [ -d downloader-backend ] && [ ! -d downloader-backend/node_modules ]; then
+  say "downloader-backend: npm install (first run)"
+  (cd downloader-backend && npm install --no-audit --no-fund) || warn "backend deps install failed (the bot will retry)"
+fi
+
 # ── 3. Export + persist env for yt-dlp/ffmpeg/Termux memory ─────────────────
 export YTDLP_BINARY="${YTDLP_BINARY:-$PREFIX/bin/yt-dlp}"
 export FFMPEG_BINARY="${FFMPEG_BINARY:-$PREFIX/bin/ffmpeg}"

@@ -237,10 +237,11 @@ async function startBot() {
 
   // Vendored Python media backend (JAILBREAK-MEDIA-BACKEND) — auto-boot the
   // uvicorn service on 127.0.0.1:8000 for Facebook/IG/TikTok/Pinterest.
-  // Non-fatal: the bot still boots without Python, and social downloads
-  // degrade to the Node backend until it comes up.
+  // Started asynchronously AFTER WhatsApp connects (below), so a slow
+  // first-run venv/pip install never blocks login. Non-fatal: social
+  // downloads degrade to the Node backend until it comes up, and it
+  // self-retries lazily on the next social link.
   const { ensureMediaBackend } = require('./tools/ensureMediaBackend');
-  await ensureMediaBackend();
 
   // Use suppressed logger for socket
   const suppressedLogger = createSuppressedLogger('silent');
@@ -262,6 +263,12 @@ async function startBot() {
 
   // Bind store to socket
   store.bind(sock.ev);
+
+  // Vendored Python media backend — boot it in the background so a slow
+  // first-run venv/pip install never blocks WhatsApp (see comment up top).
+  ensureMediaBackend().catch((err) => {
+    console.error('[MEDIA-BACKEND] background boot failed:', err?.message || err);
+  });
 
   // Watchdog for inactive socket (Baileys bug fix)
   let lastActivity = Date.now();

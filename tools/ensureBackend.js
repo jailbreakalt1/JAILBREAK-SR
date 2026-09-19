@@ -9,8 +9,10 @@
 const axios = require('axios');
 const fs = require('fs');
 const path = require('path');
-const { spawn } = require('child_process');
+const { spawn, execFile } = require('child_process');
+const { promisify } = require('util');
 
+const execFileP = promisify(execFile);
 const config = require('../config');
 const BACKEND_URL = config.localBackend.baseUrl;
 
@@ -39,6 +41,21 @@ async function backendUp() {
   }
 }
 
+async function ensureBackendDeps(dir) {
+  // downloader-backend is a separate mini-project with its own deps + a
+  // workspace (pot-server). .update/zip installs never ship node_modules,
+  // so bootstrap it ourselves on first run.
+  if (fs.existsSync(path.join(dir, 'node_modules'))) return true;
+  console.log('[BACKEND] installing downloader-backend deps (first run, may take a bit)...');
+  try {
+    await execFileP('npm', ['install', '--no-audit', '--no-fund'], { cwd: dir, timeout: 300000 });
+    return fs.existsSync(path.join(dir, 'node_modules'));
+  } catch (err) {
+    console.warn('[BACKEND] npm install failed:', err?.message || err);
+    return false;
+  }
+}
+
 async function ensureLocalBackend() {
   if (await backendUp()) return true;
 
@@ -47,6 +64,8 @@ async function ensureLocalBackend() {
     console.warn('[BACKEND] downloader-backend not found — continuing with bot-side yt-dlp fallback');
     return false;
   }
+
+  await ensureBackendDeps(dir);
 
   console.log(`[BACKEND] ${BACKEND_URL} down — starting jailbreakdl from ${dir}...`);
   try {
@@ -71,6 +90,7 @@ async function ensureLocalBackend() {
   }
 
   console.warn('[BACKEND] jailbreakdl did not come up in time — continuing with bot-side fallback');
+  console.warn('[BACKEND] if it keeps failing, a stale process may hold :30102 — on Termux: pkill -9 -f jailbreakdl, then restart the bot.');
   return false;
 }
 

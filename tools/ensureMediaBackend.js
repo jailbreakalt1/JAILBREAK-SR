@@ -108,6 +108,9 @@ async function ensureMediaBackend() {
       stdio: 'ignore',
       env: { ...process.env },
     });
+    proc.on('error', (err) => {
+      console.error('[MEDIA-BACKEND] spawn error:', err?.message || err);
+    });
     proc.unref();
   } catch (err) {
     console.error('[MEDIA-BACKEND] bootstrap failed:', err?.message || err);
@@ -115,13 +118,15 @@ async function ensureMediaBackend() {
     return false;
   }
 
-  const up = await pollUp(20); // up to ~40s
+  const up = await pollUp(45); // up to ~90s (phone ARM cold-start can be slow)
   if (up) {
     state = 'up';
     console.log('[MEDIA-BACKEND] jailbreak-media-backend is up.');
   } else {
     state = 'down';
-    console.warn('[MEDIA-BACKEND] did not come up in time — continuing without it');
+    console.warn('[MEDIA-BACKEND] did not come up in time — continuing without it.');
+    console.warn('[MEDIA-BACKEND] if it keeps failing, a stale uvicorn may hold :' + MEDIA_PORT + '.');
+    console.warn('[MEDIA-BACKEND] fix on Termux:  pkill -9 -f uvicorn   then restart the bot.');
   }
   return up;
 }
