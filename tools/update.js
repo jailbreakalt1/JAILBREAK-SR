@@ -13,6 +13,7 @@ const config = require('../config');
 const { getTempDir } = require('./tempManager');
 
 const MAX_REDIRECTS = 5;
+const DOWNLOAD_TIMEOUT_MS = 90000;
 
 function run(cmd) {
   return new Promise((resolve, reject) => {
@@ -91,6 +92,9 @@ function downloadFile(url, dest, visited = new Set()) {
       });
       req.on('error', err => {
         fs.unlink(dest, () => reject(err));
+      });
+      req.setTimeout(DOWNLOAD_TIMEOUT_MS, () => {
+        req.destroy(new Error('Download timed out'));
       });
     } catch (e) {
       reject(e);
