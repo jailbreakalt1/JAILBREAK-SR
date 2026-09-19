@@ -1,6 +1,7 @@
 /**
  * Update Command - Fetch latest code via ZIP (Owner Only)
- * Preserves runtime/state dirs: node_modules, session, temp, database, config.js
+ * Preserves runtime/state dirs: node_modules, session, session_bot, tmp,
+ * temp, database, bin, .venv, __pycache__, .env, config.js, cookies.txt
  */
 
 const { exec } = require('child_process');
@@ -28,7 +29,8 @@ async function extractZip(zipPath, outDir) {
     await run(cmd);
     return;
   }
-  // Try unzip, then 7z, then busybox unzip
+  // Try unzip, then 7z, then busybox unzip, then Python (Termux ships Python
+  // because of the media backend, and may not have unzip installed).
   try {
     await run('command -v unzip');
     await run(`unzip -o '${zipPath}' -d '${outDir}'`);
@@ -44,7 +46,12 @@ async function extractZip(zipPath, outDir) {
     await run(`busybox unzip -o '${zipPath}' -d '${outDir}'`);
     return;
   } catch {}
-  throw new Error('No unzip tool found (unzip/7z/busybox). Please install one or use a panel with unzip support.');
+  try {
+    await run('command -v python3');
+    await run(`python3 -m zipfile -e '${zipPath}' '${outDir}'`);
+    return;
+  } catch {}
+  throw new Error('No unzip tool found (unzip/7z/busybox/python3). Please install one or use a panel with unzip support.');
 }
 
 function downloadFile(url, dest, visited = new Set()) {
@@ -58,7 +65,7 @@ function downloadFile(url, dest, visited = new Set()) {
       const client = url.startsWith('https://') ? https : http;
       const req = client.get(url, {
         headers: {
-          'User-Agent': 'JAILBREAK-XMD-Updater/1.0',
+          'User-Agent': 'JAILBREAK-SR-Updater/1.0',
           'Accept': '*/*'
         }
       }, res => {
@@ -125,9 +132,16 @@ async function updateViaZip(zipUrl) {
     'node_modules',
     '.git',
     'session',
+    'session_bot',
+    'tmp',
     'temp',
     'database',
-    'config.js'
+    'bin',
+    '.venv',
+    '__pycache__',
+    '.env',
+    'config.js',
+    'cookies.txt'
   ];
   const copied = [];
   copyRecursive(srcRoot, process.cwd(), ignore, '', copied);
