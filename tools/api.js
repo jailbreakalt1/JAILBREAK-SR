@@ -14,7 +14,9 @@ const api = axios.create({
 });
 
 const CACHE_DIR = path.join(__dirname, '..', 'temp', 'songcache');
-const YT_DLP_BIN = path.join(__dirname, '..', 'bin', 'yt-dlp');
+// Bot-side fallback binary — on Termux/ARM point YTDLP_BINARY at the native
+// yt-dlp (pkg install yt-dlp) so the fallback path works on the phone.
+const YT_DLP_BIN = process.env.YTDLP_BINARY || path.join(__dirname, '..', 'bin', 'yt-dlp');
 
 // ── Local downloader backend (jailbreakdl) ─────────────────────────────────
 // Runs on the same box as the bot (default 127.0.0.1:30102) — cookies + POT +

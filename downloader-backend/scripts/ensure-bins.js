@@ -11,7 +11,14 @@ const YTDLP_URL = 'https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-
 const FFMPEG_URL = 'https://github.com/eugeneware/ffmpeg-static/releases/download/b6.1.1/ffmpeg-linux-x64';
 const MAX_BYTES = 250 * 1024 * 1024;
 
-async function ensure(binDir, name, url) {
+async function ensure(binDir, name, url, envKey) {
+  // Termux/ARM: if the user points at a native binary via the env var, don't
+  // fetch the x86_64 static build (it would never run on the phone's CPU).
+  const override = process.env[envKey];
+  if (override) {
+    console.log(`[ensure-bins] ${envKey}=${override} — skipping bundled download`);
+    return null;
+  }
   const target = path.join(binDir, name);
   try {
     await fsp.access(target, fs.constants.X_OK);
@@ -34,14 +41,15 @@ async function ensure(binDir, name, url) {
 (async () => {
   try {
     const binDir = path.join(__dirname, '..', 'bin');
-    const yt = await ensure(binDir, 'yt-dlp', YTDLP_URL);
-    const ff = await ensure(binDir, 'ffmpeg', FFMPEG_URL);
+    const yt = await ensure(binDir, 'yt-dlp', YTDLP_URL, 'YTDLP_BINARY');
+    const ff = await ensure(binDir, 'ffmpeg', FFMPEG_URL, 'FFMPEG_BINARY');
     const [ytRes, ffRes] = await Promise.all([
-      execFileP(yt, ['--version']),
-      execFileP(ff, ['-version']),
+      yt ? execFileP(yt, ['--version']).catch(() => ({ stdout: '' })) : Promise.resolve({ stdout: '' }),
+      ff ? execFileP(ff, ['-version']).catch(() => ({ stdout: '' })) : Promise.resolve({ stdout: '' }),
     ]);
-    console.log(`[ensure-bins] yt-dlp: ${ytRes.stdout.split('\n')[0]}`);
-    console.log(`[ensure-bins] ffmpeg: ${ffRes.stdout.split('\n')[0]}`);
+    if (ytRes.stdout) console.log(`[ensure-bins] yt-dlp: ${ytRes.stdout.split('\n')[0]}`);
+    if (ffRes.stdout) console.log(`[ensure-bins] ffmpeg: ${ffRes.stdout.split('\n')[0]}`);
+    if (!yt && !ff) console.log('[ensure-bins] using system yt-dlp/ffmpeg (env overrides)');
 
     const cookiesB64 = process.env.COOKIES_B64;
     const cookiesPath = process.env.COOKIES_FILE || path.join(__dirname, '..', 'cookies.txt');
