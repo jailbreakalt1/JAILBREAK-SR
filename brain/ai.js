@@ -709,6 +709,7 @@ async function think(jid, userMsg, meta = {}) {
                     try { meta.onTool(toolName); } catch (_) {}
                 }
                 const result = await runTool(tc, { sock, msg, commands, brainExtra });
+                markToolFired(toolName);
                 anyToolCalledThisTurn = true;
                 if (result.askedAlready && result.toolName) noRetryTools.add(result.toolName);
                 messages.push({ role: 'tool', tool_call_id: tc.id, content: result.content });
