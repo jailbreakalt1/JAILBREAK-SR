@@ -3,7 +3,7 @@ const fs = require('fs');
 const path = require('path');
 
 const FILE = path.join(__dirname, '..', 'database', 'dailyQuota.json');
-const DEFAULT_LIMIT = 10;
+const DEFAULT_LIMIT = Number.MAX_SAFE_INTEGER; // no request limits — the counter only tracks usage
 
 const pending = new Map();
 

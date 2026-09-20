@@ -11,7 +11,6 @@ const cookieRoute = require('./routes/cookie.route');
 const potRoute = require('./routes/pot.route');
 const imgRoute = require('./routes/img.route');
 const healthRoute = require('./routes/health.route');
-const quotaRoute = require('./routes/quota.route');
 const tempFileManager = require('./core/tempFileManager');
 
 const app = express();
@@ -25,7 +24,6 @@ app.use('/api/media', mediaRoute);
 app.use('/api/cookies', cookieRoute);
 app.use('/api/pot', potRoute);
 app.use('/api/img', imgRoute);
-app.use('/api/quota', quotaRoute);
 app.use('/', healthRoute);
 
 app.use((_req, res) => {
@@ -66,24 +64,19 @@ async function logConnectionDetails() {
   const publicIp = process.env.PUBLIC_IP || process.env.PUBLIC_HOST || await lookupPublicIp();
   const host = publicIp || 'PUBLIC_IP_UNAVAILABLE';
   const backendUrl = `http://${host}:${config.port}`;
-  const quotaUrl = `${backendUrl}/api/quota`;
 
   logger.info({
     bind: '0.0.0.0',
     ip: host,
     port: config.port,
     backendUrl,
-    quotaUrl,
-    quotaToken: config.quotaToken ? 'configured' : 'missing',
   }, 'connection details');
 
   const reset = '\x1b[0m';
   const cyan = '\x1b[36m';
   const green = '\x1b[32m';
-  const yellow = '\x1b[33m';
   const white = '\x1b[97m';
   const bold = '\x1b[1m';
-  const tokenStatus = config.quotaToken ? `${green}configured${reset}` : `${yellow}missing${reset}`;
 
   console.log(`\n${cyan}${bold}╔══════════════════════════════════════════╗${reset}`);
   console.log(`${cyan}${bold}║         JAILBREAK DOWNLOAD BACKEND       ║${reset}`);
@@ -91,8 +84,6 @@ async function logConnectionDetails() {
   console.log(`${cyan}║${reset} ${white}IP       ${cyan}│${reset} ${green}${host}${reset}`);
   console.log(`${cyan}║${reset} ${white}PORT     ${cyan}│${reset} ${green}${config.port}${reset}`);
   console.log(`${cyan}║${reset} ${white}BACKEND  ${cyan}│${reset} ${green}${backendUrl}${reset}`);
-  console.log(`${cyan}║${reset} ${white}QUOTA    ${cyan}│${reset} ${green}${quotaUrl}${reset}`);
-  console.log(`${cyan}║${reset} ${white}TOKEN    ${cyan}│${reset} ${tokenStatus}`);
   console.log(`${cyan}${bold}╚══════════════════════════════════════════╝${reset}\n`);
 }
 

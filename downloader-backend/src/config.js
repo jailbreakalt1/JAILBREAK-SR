@@ -14,7 +14,4 @@ module.exports = {
   ffmpegBinary: binPaths.ffmpegBinary,
   tempRoot: process.env.TEMP_ROOT || path.join(os.tmpdir(), 'dl-backend'),
   cookiesFile: process.env.COOKIES_FILE || path.join(__dirname, '..', 'cookies.txt'),
-  quotaToken: process.env.QUOTA_API_TOKEN || '',
-  quotaDbPath: process.env.QUOTA_DB_PATH || path.join(__dirname, '..', 'data', 'quota.db'),
-  quotaLimit: Number(process.env.QUOTA_DAILY_LIMIT || 10),
 };
