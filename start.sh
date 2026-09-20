@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# JAILBREAK-SR one-shot: update -> deps -> patch -> launch (Termux tmux)
-# Usage: ./start.sh            (update + verify + launch bot in tmux 'bot')
-#        ./start.sh --check    (do everything EXCEPT launching; safe preview)
+# JAILBREAK-SR one-shot: update -> deps -> clean old process -> launch (Termux tmux)
+# Usage: ./start.sh             (clean boot — restarts the bot if already running)
+#        ./start.sh --attach    (just peek at the running session, no restart)
+#        ./start.sh --check     (do everything EXCEPT launching; safe preview)
 
 set -u
 set -o pipefail
@@ -12,14 +13,24 @@ PREFIX="${PREFIX:-/usr}"
 
 cd "$(dirname "$0")" || exit 1
 
-if [ "${1:-}" = "--check" ]; then
-  DRY=1
-else
-  DRY=0
-fi
+case "${1:-}" in
+  --check)  MODE="check";  DRY=1  ;;
+  --attach) MODE="attach"; DRY=0  ;;
+  --restart) MODE="boot";  DRY=0  ;;
+  *)        MODE="boot";   DRY=0  ;;
+esac
 
 say() { printf '\n[*] %s\n' "$*"; }
 warn() { printf '[!] %s\n' "$*"; }
+
+# --attach: never restart — just drop into the existing session if there is one.
+if [ "$MODE" = "attach" ]; then
+  if command -v tmux >/dev/null 2>&1 && tmux has-session -t bot 2>/dev/null; then
+    exec tmux attach -t bot
+  fi
+  warn "bot isn't running — booting it instead"
+  MODE="boot"
+fi
 
 # ── 1. Pull latest code (skip when no .git, e.g. zip install) ──────────────
 if [ -d .git ]; then
@@ -85,18 +96,25 @@ if [ "$DRY" = "1" ]; then
   exit 0
 fi
 
-# ── 5. Keep the phone awake + launch in tmux (auto-restarts) ────────────────
+# ── 5. Keep the phone awake + launch (always a clean boot) ───────────────────
 if command -v termux-wake-lock >/dev/null 2>&1; then
   termux-wake-lock
 fi
 
+# A running node outlives its tmux pane (it gets orphaned), so killing just the
+# session leaves the OLD code running and holding the socket. Kill both the
+# session and the orphaned node processes ("index[.]js" bracket-trick prevents
+# this script's own pkill from matching itself).
 if tmux has-session -t bot 2>/dev/null; then
-  say "re-attaching to existing tmux session 'bot'"
-  tmux attach -t bot
-  exit 0
+  say "stopping existing tmux session 'bot'"
+  tmux kill-session -t bot 2>/dev/null || true
 fi
+say "killing orphaned bot processes (if any)"
+pkill -9 -f 'node index[.]js' 2>/dev/null || true
+pkill -9 -f 'node src/server[.]js' 2>/dev/null || true
+sleep 1
 
-say "starting bot in tmux session 'bot' (Ctrl-B then d to leave, tmux attach to return)"
+say "starting bot in tmux session 'bot' (Ctrl-B then d to leave, ./start.sh --attach to return)"
 tmux new-session -d -s bot
 tmux send-keys -t bot \
   "export YTDLP_BINARY=$PREFIX/bin/yt-dlp; export FFMPEG_BINARY=$PREFIX/bin/ffmpeg; export NODE_OPTIONS=--max-old-space-size=256; while :; do node index.js; sleep 3; done" \
