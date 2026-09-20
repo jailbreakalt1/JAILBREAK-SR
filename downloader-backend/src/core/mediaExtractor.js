@@ -75,7 +75,7 @@ const VIDEO_STRATEGIES = [
   'best',
 ];
 
-function buildArgs({ url, dir, formatSelector, kind, tiktokAttempt = 0 }) {
+function buildArgs({ url, dir, formatSelector, kind, tiktokAttempt = 0, convertMp3 = false }) {
   const args = [
     url,
     '--no-warnings',
@@ -98,11 +98,22 @@ function buildArgs({ url, dir, formatSelector, kind, tiktokAttempt = 0 }) {
   if (kind === 'video') {
     args.push('--merge-output-format', 'mp4');
   }
+  if (convertMp3) {
+    // Media players recognise MP3 as a real song; native bestaudio is
+    // usually AAC-in-MP4 (.m4a) which most music apps won't catalogue.
+    // -x --audio-format mp3 re-encodes; --embed-metadata writes ID3
+    // title/artist/album so the player shows the song info.
+    args.push('-x', '--audio-format', 'mp3', '--audio-quality', '5', '--embed-metadata');
+    const ff = config.ffmpegBinary;
+    if (typeof ff === 'string' && ff.includes('/')) {
+      args.push('--ffmpeg-location', path.dirname(ff));
+    }
+  }
   return args;
 }
 
-async function runOnce({ url, dir, formatSelector, kind }) {
-  const args = buildArgs({ url, dir, formatSelector, kind });
+async function runOnce({ url, dir, formatSelector, kind, convertMp3 = false }) {
+  const args = buildArgs({ url, dir, formatSelector, kind, convertMp3 });
   // TikTok API/roundtrips fail fast when they fail — don't let a dead attempt
   // eat the whole 5-minute budget. Cap tiktok attempts at 90s each.
   const attemptTimeout = isTiktokUrl(url)
@@ -159,6 +170,9 @@ function isTiktokUrl(url) {
 function attemptList(kind, url) {
   const strategies = kind === 'audio' ? AUDIO_STRATEGIES : VIDEO_STRATEGIES;
   const list = [];
+  // First try to deliver real MP3 (convert with the bundled/native ffmpeg);
+  // if conversion is impossible the plain strategies below still fall back.
+  if (kind === 'audio') list.push({ formatSelector: 'bestaudio/best', convertMp3: true });
   const passes = isTiktokUrl(url) ? 3 : 1;
   for (let pass = 0; pass < passes; pass += 1) {
     for (let i = 0; i < strategies.length; i += 1) {
@@ -181,8 +195,8 @@ async function extractMedia({ url, requestId, kind }) {
       const attemptDir = path.join(base, `${kind}-${i}`);
       await fsp.mkdir(attemptDir, { recursive: true });
       try {
-        const { formatSelector, tiktokAttempt } = attempts[i];
-        return await runOnce({ url, dir: attemptDir, formatSelector, kind, tiktokAttempt });
+        const { formatSelector, tiktokAttempt, convertMp3 } = attempts[i];
+        return await runOnce({ url, dir: attemptDir, formatSelector, kind, tiktokAttempt, convertMp3 });
       } catch (err) {
         errors.push(`${attempts[i].formatSelector || 'default'}: ${err.message}`);
         if (err.debug) lastDebug = err.debug;

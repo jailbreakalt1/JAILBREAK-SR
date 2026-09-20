@@ -39,6 +39,7 @@ async function getBackendMediaByUrl(youtubeUrl, kind) {
   } else {
     const ascii0 = buffer.slice(4, 8).toString('ascii');
     if (buffer.toString('ascii', 0, 4) === 'OggS') { ext = 'ogg'; mimetype = 'audio/ogg'; }
+    else if (buffer.toString('hex', 0, 4).startsWith('1a45dfa3')) { ext = 'webm'; mimetype = 'audio/webm'; }
     else if (ascii0 === 'ftyp' || (buffer.length >= 12 && buffer.toString('hex').slice(0, 12) === '000000')) { ext = 'm4a'; mimetype = 'audio/mp4'; }
     else { ext = 'mp3'; mimetype = 'audio/mpeg'; }
   }

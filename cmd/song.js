@@ -127,6 +127,7 @@ const normalizeAudioFromFile = async (filePath) => {
     const ascii = buf.slice(4, 8).toString('ascii');
     const ext = buf.toString('ascii', 0, 4) === 'OggS' ? 'ogg'
       : buf.toString('ascii', 0, 4) === 'RIFF' ? 'wav'
+      : buf.toString('hex', 0, 4).startsWith('1a45dfa3') ? 'webm'
       : ascii === 'ftyp' || buf.toString('hex').startsWith('000000') ? 'm4a'
       : 'mp3';
     if (ext === 'mp3') {
@@ -155,6 +156,7 @@ const normalizeAudio = async (buffer) => {
   const ascii = buffer.slice(4, 8).toString('ascii');
   const ext = buffer.toString('ascii', 0, 4) === 'OggS' ? 'ogg'
     : buffer.toString('ascii', 0, 4) === 'RIFF' ? 'wav'
+    : buffer.toString('hex', 0, 4).startsWith('1a45dfa3') ? 'webm'
     : ascii === 'ftyp' || header.toString('hex').startsWith('000000') ? 'm4a'
     : 'mp3';
   if (ext === 'mp3') return { buffer, mimetype: 'audio/mpeg', ext: 'mp3' };
@@ -259,6 +261,19 @@ module.exports = {
         release();
       }
       if (lastErr) throw lastErr;
+
+      // Safety net: always deliver MP3 so media players see a normal song.
+      // The backend usually converts already, but if it fell back to m4a/webm
+      // (e.g. ffmpeg missing there), convert here with the local ffmpeg.
+      if (audio && audio.ext && audio.ext !== 'mp3' && audio.buffer && audio.buffer.length) {
+        try {
+          console.log(`[SONG] converting ${audio.ext} -> mp3 before send`);
+          audio = await normalizeAudio(audio.buffer);
+        } catch (err) {
+          console.log(`[SONG] mp3 conversion failed, sending ${audio.ext}:`, err.message);
+        }
+      }
+
       const senderJid = toPhoneJid(extra.sender || msg.key.participant || msg.key.remoteJid);
       const senderNum = cleanNumber(senderJid);
       const fileName = `${sanitize(song.author, 'Unknown Artist')} - ${sanitize(payload?.title || song.info.title)}.${audio.ext}`;
