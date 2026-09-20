@@ -1,6 +1,9 @@
 /**
- * Ensure the vendored Python media backend (JAILBREAK-MEDIA-BACKEND) is up on
- * 127.0.0.1:8000 before the bot serves social links. Same philosophy as
+ * Ensure the vendored Python media backend (JAILBREAK-MEDIA-BACKEND) comes up
+ * before the bot serves social links. We NEVER bind the configured port
+ * (8000) — a stale process from a previous run always makes that a gamble. We
+ * pick a random free port (like the dl backend's PORT setting) and point the
+ * runtime baseUrl at it, so api.js follows automatically. Same philosophy as
  * tools/ensureBackend.js: if it's down, bootstrap the venv + spawn uvicorn
  * detached, poll /api/health, and NEVER make it fatal. On Termux this also
  * works (plain `uvicorn` — no [standard] extras — so no uvloop/httptools
@@ -11,13 +14,25 @@ const { execFile } = require('child_process');
 const { promisify } = require('util');
 const fs = require('fs');
 const path = require('path');
+const net = require('net');
 const axios = require('axios');
 
 const config = require('../config');
 const MEDIA_BASE_URL = config.mediaBackend.baseUrl;
-const MEDIA_PORT = config.mediaBackend.port;
 
 const execFileP = promisify(execFile);
+
+function findFreePort() {
+  // Ask the OS for a random free port (like the dl backend's PORT setting).
+  return new Promise((resolve, reject) => {
+    const srv = net.createServer();
+    srv.on('error', reject);
+    srv.listen(0, '127.0.0.1', () => {
+      const port = srv.address().port;
+      srv.close(() => resolve(port));
+    });
+  });
+}
 
 function resolveMediaBackendDir() {
   const override = config.mediaBackend.dir;
@@ -38,8 +53,9 @@ function resolveMediaBackendDir() {
 }
 
 async function mediaBackendUp() {
+  // Read the URL live so a random-port fallback is picked up immediately.
   try {
-    const res = await axios.get(`${MEDIA_BASE_URL}/api/health`, { timeout: 2500 });
+    const res = await axios.get(`${config.mediaBackend.baseUrl}/api/health`, { timeout: 2500 });
     return res.status === 200 && res.data && res.data.ok === true;
   } catch (_) {
     return false;
@@ -99,10 +115,16 @@ async function ensureMediaBackend() {
     return false;
   }
 
+  // Never bind to the configured port (8000) — stale processes always make
+  // that shape a gamble. Pick a random free port, exactly like the dl
+  // backend's PORT setting, and point api.js at it via the runtime baseUrl.
+  const port = await findFreePort();
+  config.mediaBackend.baseUrl = `http://127.0.0.1:${port}`;
+
   try {
     const venvPy = await ensureVenv(dir);
-    console.log(`[MEDIA-BACKEND] spawning uvicorn on 127.0.0.1:${MEDIA_PORT} from ${dir}`);
-    const proc = execFile(venvPy, ['-m', 'uvicorn', 'app:app', '--host', '127.0.0.1', '--port', String(MEDIA_PORT), '--log-level', 'info'], {
+    console.log(`[MEDIA-BACKEND] spawning uvicorn on 127.0.0.1:${port} from ${dir}`);
+    const proc = execFile(venvPy, ['-m', 'uvicorn', 'app:app', '--host', '127.0.0.1', '--port', String(port), '--log-level', 'info'], {
       cwd: dir,
       detached: true,
       stdio: 'ignore',
@@ -118,15 +140,13 @@ async function ensureMediaBackend() {
     return false;
   }
 
-  const up = await pollUp(45); // up to ~90s (phone ARM cold-start can be slow)
+  const up = await pollUp(45); // ~90s for phone ARM cold start
   if (up) {
     state = 'up';
-    console.log('[MEDIA-BACKEND] jailbreak-media-backend is up.');
+    console.log(`[MEDIA-BACKEND] jailbreak-media-backend is up on random port :${port}.`);
   } else {
     state = 'down';
     console.warn('[MEDIA-BACKEND] did not come up in time — continuing without it.');
-    console.warn('[MEDIA-BACKEND] if it keeps failing, a stale uvicorn may hold :' + MEDIA_PORT + '.');
-    console.warn('[MEDIA-BACKEND] fix on Termux:  pkill -9 -f uvicorn   then restart the bot.');
   }
   return up;
 }
