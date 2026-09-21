@@ -69,15 +69,20 @@ if [ -d downloader-backend ] && [ ! -d downloader-backend/node_modules ]; then
   (cd downloader-backend && npm install --no-audit --no-fund) || warn "backend deps install failed (the bot will retry)"
 fi
 
-# ── 3. Export + persist env for yt-dlp/ffmpeg/Termux memory ─────────────────
+# ── 3. Export + persist env for yt-dlp/ffmpeg/Node memory ─────────────────
+# JB_HEAP_MB caps V8's old-space. 256 was a Termux-phone-era guard — on real
+# RAM (desktop/VPS) the brain's wider context + tool results + audio buffers
+# legitimately peak past it and OOM (observed at 254.8MB). 1GB is the
+# sensible default here; the [HEALTH] heartbeat still catches true leaks.
+JB_HEAP_MB="${JB_HEAP_MB:-1024}"
 export YTDLP_BINARY="${YTDLP_BINARY:-$PREFIX/bin/yt-dlp}"
 export FFMPEG_BINARY="${FFMPEG_BINARY:-$PREFIX/bin/ffmpeg}"
-export NODE_OPTIONS="--max-old-space-size=256 --max-semi-space-size=32"
+export NODE_OPTIONS="--max-old-space-size=$JB_HEAP_MB --max-semi-space-size=32"
 
 for line in \
   "export YTDLP_BINARY=\$PREFIX/bin/yt-dlp" \
   "export FFMPEG_BINARY=\$PREFIX/bin/ffmpeg" \
-  "export NODE_OPTIONS=--max-old-space-size=256 --max-semi-space-size=32"; do
+  "export NODE_OPTIONS=--max-old-space-size=$JB_HEAP_MB --max-semi-space-size=32"; do
   grep -qF "$line" "$HOME/.bashrc" 2>/dev/null || echo "$line" >> "$HOME/.bashrc"
 done
 say "env: YTDLP=$YTDLP_BINARY FFMPEG=$FFMPEG_BINARY NODE_OPTIONS=$NODE_OPTIONS"
@@ -117,6 +122,6 @@ sleep 1
 say "starting bot in tmux session 'bot' (Ctrl-B then d to leave, ./start.sh --attach to return)"
 tmux new-session -d -s bot
 tmux send-keys -t bot \
-  "export YTDLP_BINARY=$PREFIX/bin/yt-dlp; export FFMPEG_BINARY=$PREFIX/bin/ffmpeg; export NODE_OPTIONS=--max-old-space-size=256\ --max-semi-space-size=32; while :; do node index.js; sleep 3; done" \
+  "export YTDLP_BINARY=$PREFIX/bin/yt-dlp; export FFMPEG_BINARY=$PREFIX/bin/ffmpeg; export NODE_OPTIONS=--max-old-space-size=$JB_HEAP_MB\ --max-semi-space-size=32; while :; do node index.js; sleep 3; done" \
   Enter
 tmux attach -t bot
