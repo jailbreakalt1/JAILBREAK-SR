@@ -4,6 +4,12 @@ All notable changes to JAILBREAK-SR.
 
 ## [Unreleased]
 
+### Fixed — "Send it" / bare directives never fired the tool
+- **Bug** (observed live): after a search had just identified a video, the owner's "Gimme" / "Send it" turns produced *text only* — no `video` tool call, no download, nothing sent. Cause: `toolIntentFor` rejects the bare imperative ("send" is a weak verb, tail is "it" → vague → null) and neither the user message nor the reply carried a title, so the intent net saw `null` and shrugged.
+- **Fix**: new `mediaIntentFromHistory()` in `brain/ai.js` — when the user sends a **bare directive** ("send it", "gimme", "do it", "yes", "it", "that") and the *previous assistant turn* in memory named a medium (video/song/lyrics), the concrete title is resolved from history and fed through the existing nudge→force pipeline. Known-songs list is the fallback for "the song / it".
+- **Priority**: a forceable user/reply intent wins; otherwise the concrete history-resolved intent beats a fuzzy nudge-only reply intent (so the nudge never carries a garbage query from the model's clarifying question).
+- Verified: 7/7 unit cases + owner-jid E2E — "Send it" fires `video("Julian King Handiyide…")` and delivers.
+
 ### Added — wider conversation context window
 - **`config.memory`** (env-overridable: `MEMORY_MAX_TURNS`, `MEMORY_SUMMARIZE_THRESHOLD`, `MEMORY_KEEP_RECENT`): JB's long-term memory shape is now config-driven instead of baked-in constants.
 - **Defaults roughly doubled**: hard cap `maxTurns` 40→**64**, AI-summary fold threshold `summarizeThreshold` 25→**40**, verbatim-recent window `keepRecent` 20→**30**. A long chat now keeps 30 real turns word-for-word (was 20) plus the AI-condensed summary — that's 50% more vivid recall at trivial cost (all models have 128K–1M native context).

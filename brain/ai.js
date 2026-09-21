@@ -202,6 +202,51 @@ function isConcreteQuery(q) {
     return true;
 }
 
+// ── History-mediated intent (bare directives) ───────────────────────────
+// The user often follows up a *delivered result* with a bare imperative —
+// "send it", "gimme", "do it", "yes". There's no title anywhere in-turn, so
+// the nets above see null intent and the tool never fires (observed live:
+// "Send it" after a search had just identified a video → nothing sent).
+// If the previous assistant turn in memory actually *named* a medium
+// (video/song/lyrics), treat that as this turn's pending action: nudge, then
+// force. knownSongs acts as the "the song / that track" fallback.
+const BARE_DIRECTIVE_RE =
+    /^\s*(?:gimme|give\s+(?:me|us)|send\s+(?:it|that|now)|send\b|fetch\s+(?:it|that)|download\s+(?:it|that)|play\s+(?:it|that)|do\s+(?:it|that|the\s+(?:thing|need))?|go\s*(?:ahead)?|go\b|yes|yeah|yep|yup|ok|okay|okaay|sure|alright|aight|bet|now|please|go\s+fetch|it|that|that\s+one|the\s+one)\s*[.!]*\s*$/i;
+
+function titleFromMediaLine(text) {
+    if (!text || typeof text !== 'string') return null;
+    const quoted = text.match(/["'«“„]([^"'»”]{3,80})["'»”]/);
+    if (quoted) return cleanReplyQuery(quoted[1]);
+    const official = text.match(/([A-Za-z0-9][\w&'.,\-\s]{2,70}?)\s*\(Official\s*(?:Video|Audio|Lyrics|Music\s*Video)\)/i);
+    if (official) return official[1].trim();
+    return null;
+}
+
+function mediaIntentFromHistory(jidHistory, userMsg, knownSongs) {
+    if (!jidHistory || !Array.isArray(jidHistory)) return null;
+    if (!BARE_DIRECTIVE_RE.test(userMsg) || userMsg.length > 24) return null;
+    if (/\b(?:what|who|how|why|when)\b/i.test(userMsg)) return null;  // it's a question, not a pointer
+
+    const tail = jidHistory.slice(-9).slice(0, -1); // everything except the current userMsg
+    for (let i = tail.length - 1; i >= 0; i--) {
+        const m = tail[i];
+        if (!m || m.role !== 'assistant' || typeof m.content !== 'string') continue;
+
+        const hasVideo  = VIDEO_MARKERS.test(m.content);
+        const hasLyrics = LYRIC_MARKERS.test(m.content);
+        const hasSong   = CONTENT_MARKERS.test(m.content);
+        if (!hasVideo && !hasLyrics && !hasSong) continue;
+
+        const command = hasLyrics && !hasVideo ? 'lyrics' : hasVideo ? 'video' : 'song';
+        let query = titleFromMediaLine(m.content);
+        if (!query && command === 'song' && knownSongs?.length) query = knownSongs[0];
+        if (!query || query.length < 3 || VAGUE_TARGET_RE.test(query)) continue;
+
+        return { command, query };
+    }
+    return null;
+}
+
 // ── Reply-side intent (acknowledgements) ────────────────────────────────
 // The model often *answers* with "got it, lemme fetch MOTA INOMHANYA", which
 // never reached a tool call. That reply text is itself evidence of intent —
@@ -907,7 +952,14 @@ async function think(jid, userMsg, meta = {}) {
                 continue;
             }
 
-            const intent = resolveTurnIntent(candidateText, userMsg);
+            const intent =
+                    (() => {
+                        const r = resolveTurnIntent(candidateText, userMsg);
+                        if (r && r.forceable) return r;                                   // user/reply named a real title
+                        const h = mediaIntentFromHistory(history, userMsg, knownSongs);   // bare directive + prior result
+                        if (h) return { command: h.command, query: h.query, forceable: isConcreteQuery(h.query) };
+                        return r;                                                          // fuzzy — nudge-only, never force
+                    })();
             if (intent && !intentNudged) {
                 intentNudged = true;
                 console.warn(`[JB-BRAIN] intent "${intent.command}('${intent.query}')" detected but no tool fired for ${jid} — nudging once`);
@@ -970,4 +1022,4 @@ async function think(jid, userMsg, meta = {}) {
     return { type: 'text', reply: finalText, remember };
 }
 
-module.exports = { think, parseFinalText, toolIntentFor, isConcreteQuery, isActionAck, cleanReplyQuery, resolveTurnIntent, researchIntentFor, buildResearchQuery, agenticSignalFor };
+module.exports = { think, parseFinalText, toolIntentFor, isConcreteQuery, isActionAck, cleanReplyQuery, resolveTurnIntent, researchIntentFor, buildResearchQuery, agenticSignalFor, mediaIntentFromHistory };
