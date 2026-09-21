@@ -118,9 +118,22 @@ Node backend; `GET /api/health` confirms it's up.
 ## Config
 
 Center of truth is `config.js` — baked API keys, owner numbers
-(`OWNER_NUMBERS`), prefix, model slots, check-in/anti-spam tuning, quiet hours
+(`OWNER_NUMBERS`), prefix, model slots, quiet hours
 (`config.quiet`), XP (`config.xp`), STT (`config.stt`). Anything can be
 overridden without touching code via the matching var in `.env`.
+
+## Autonomy ("friend mode")
+
+JB is not a vending machine. Two layers of self-initiative make it act like a friend:
+
+1. **In-conversation** (`brain/persona.js` + `brain/ai.js`): on emotional beats in DMs it proactively
+   fires a song without being asked — apology → "Sorry", rough day/stress → a comfort track,
+   celebration/win → a hype track. Nudge-only, groups excluded, one terminal tool per turn.
+2. **Out-of-band** (`brain/checkIn.js`): when a DM partner has been quiet past
+   `checkIn.thresholdHours`, a scheduler (every `checkIn.intervalMinutes`) opens an initiative window
+   and lets the FULL tool-capable brain act on its own — send a song, fetch live data, or just a short line.
+   Guarded by: DMs only, quiet hours, a `checkIn.cooldownHours` gap, one send per cycle, a global
+   `checkIn.dailyCeil` per day, and a 75s timeout. Results are saved to memory so replies continue the thread.
 
 ## Git hygiene
 

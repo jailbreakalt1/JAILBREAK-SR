@@ -717,7 +717,7 @@ async function handleMessage(sock, msg) {
       // Init the scheduler lazily on the first DM so we always have a live sock.
       if (!from.endsWith('@g.us')) {
         checkIn.updateLastSeen(from, pushName);
-        if (!checkIn.isInitialized()) checkIn.init(sock, config);
+        if (!checkIn.isInitialized()) checkIn.init(sock, config, commands);
         songRecommend.setSock(sock);
       }
 

@@ -4,6 +4,13 @@ All notable changes to JAILBREAK-SR.
 
 ## [Unreleased]
 
+### Added — agentic autonomy ("friend mode")
+- **In-conversation initiative**: new `AUTONOMY (FRIEND-INITIATIVE)` persona section + `agenticSignalFor()` classifier in `brain/ai.js`. In DMs, JB now takes the wheel on emotional beats — someone apologizes → it proactively calls the `song` tool with "Sorry" and gifts them the track; rough day/stress → one chill comfort track; celebration/win → a hype track. Nudge-only (never forced), groups excluded, one terminal tool per turn.
+- **Out-of-band initiative engine** (`brain/checkIn.js` rewritten): after a DM is quiet past `thresholdHours`, a scheduler opens an initiative **window** (every `intervalMinutes`) and lets the FULL tool-capable brain decide — fire a real tool (send a song, fetch weather, etc.) or just a short line. Implements the "actually agentic" tier: the model owns the judgement, not a canned script. Saved to memory so the next user message continues the thread.
+- **Guardrails**: DMs only, quiet hours respected, 24h→12h threshold / 48h→24h cooldown gates, ONE initiative per cycle, global `dailyCeil` (2/day) persisted with day reset, 75s timeout so a flaky model can't wedge the scheduler.
+- **Config**: `checkIn.intervalMinutes` (20) + `checkIn.dailyCeil` (2); `CHECKIN_THRESHOLD_HOURS`/`CHECKIN_COOLDOWN_HOURS` env defaults relaxed.
+- **Wiring**: `handler.js` passes the command registry so autonomous turns have real tools; `ai.js` skips research-intent and deterministic-force nets during autonomous turns (they'd misfire on the note itself).
+
 ### Added — big feature batch (36 commands)
 - **Fun/instant**: `.joke`, `.fact`, `.quote`, `.riddle`, `.8ball`, `.advice`, `.trivia`, `.horo` (daily horoscope)
 - **Knowledge**: `.translate` (Google, keyless), `.dict` (dictionaryapi.dev + Wikipedia fallback), `.wiki` (with UA fix), `.ipinfo` (ipwho.is)

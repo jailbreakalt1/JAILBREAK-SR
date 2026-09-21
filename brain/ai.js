@@ -291,6 +291,32 @@ function researchIntentFor(text) {
     return { forceable: true, query: buildResearchQuery(t) };
 }
 
+// ── Proactive in-turn initiative ─────────────────────────────────────────────
+// The agent doesn't wait to be ordered. When an emotional beat lands (apology,
+// rough day, win), a friend would send the matching song without being asked.
+// This classifier detects those beats in DM text so the brain can nudge the
+// model to fire one song tool call on its own. Nudge-only — never forced — so
+// the model keeps final judgment on whether a track genuinely fits.
+const AGENTIC_APOLOGY_RE =
+    /\b(?:so?rry|so sorry|i'm so?rry|so?rry (?:about|for)|my bad|pardon(?:\s+me)?|forgive me|apolog(?:ize|ise[sd]?)?|deeply sorry)\b/i;
+const AGENTIC_LOW_RE =
+    /\b(?:stress(?:ed|ful)?|rough|rocky|hard)\s+(?:day|week|time|night)|\bhad\s+a\s+(?:rough|bad|hard|long|lousy)\b|\bfeel(?:ing)?\s+(?:really\s+|so\s+|quite\s+)?(?:down|low|blue|broken|empty|unhappy|sad)\b|\bdepress(?:ed|ion)?\b|\boverwhelm(?:ed|ing)?\b|\blonely\b|\bheart(?:broken|break)\b|\bsad\b|\bmiserable\b|\bnot\s+(?:ok(?:ay)?|fine|feeling\s+well)\b|\btough\s+(?:day|night|week)\b/i;
+const AGENTIC_SWEET_RE =
+    /\b(?:celebrat(?:e|ing|ed)|promot(?:ion|ed)|passed(?: my|\s+the)? (?:exam|test|interview)|got\s+the\s+job|won\b|win\b|wins?|big\s+day|special\s+day|graduat(?:e|ed|ion)|birthday|anniversary|engaged|new\s+car|new\s+phone|new\s+house|new\s+job|good\s+news|great\s+news|success|congratulat(?:ions?|e[sd]?))\b/i;
+const AGENTIC_GIFT_MAP = [
+    { re: AGENTIC_APOLOGY_RE, query: 'Sorry', why: 'they just apologized — the famous "Sorry" track is the perfect playful apology gift' },
+    { re: AGENTIC_SWEET_RE,   query: 'Celebration', why: 'they have something to celebrate — a lively celebration track fits the mood' },
+    { re: AGENTIC_LOW_RE,     query: 'calming comfort song', why: 'they opened up about feeling low — one gentle comfort track can mean more than words' },
+];
+
+function agenticSignalFor(text) {
+    if (!text || typeof text !== 'string') return null;
+    for (const { re, query, why } of AGENTIC_GIFT_MAP) {
+        if (re.test(text)) return { command: 'song', query, why };
+    }
+    return null;
+}
+
 /** Best-effort intent for the turn. Returns { command, query, forceable }.
  *  Priority: the USER's title is ground truth whenever it's concrete (the
  *  model may ack vaguely or even hallucinate a different title). The REPLY's
@@ -697,6 +723,12 @@ async function think(jid, userMsg, meta = {}) {
     let researchNudged = false; // research nudge is also one-per-turn
     const markToolFired = (name) => { if (name === 'search') searchFired = true; };
     const noRetryTools = new Set();    // terminal tools that already asked a clarifying question this turn
+    // Proactive in-turn initiative — when an emotional beat lands (apology,
+    // rough day, win) in a DM, nudge the model to fire ONE song tool call of
+    // its own. Nudge-only, never forced. Skipped in groups and in autonomous
+    // (check-in) turns, which have their own rules.
+    const agenticSignal = (canRunTools && !meta.autonomous && !jid.endsWith('@g.us')) ? agenticSignalFor(userMsg) : null;
+    let agenticNudged = false;
     let finalText = null;
     let remember  = null;
 
@@ -814,7 +846,7 @@ async function think(jid, userMsg, meta = {}) {
         // results back so it must summarize them. This is what makes JB
         // "search → summarise → present" instead of replying "I would search"
         // and sitting waiting for the user to nudge back.
-        if (canRunTools && !terminalFired && !searchFired) {
+        if (canRunTools && !terminalFired && !searchFired && !meta.autonomous) {
             const research = researchIntentFor(userMsg);
             if (research && !researchNudged) {
                 researchNudged = true;
@@ -852,7 +884,24 @@ async function think(jid, userMsg, meta = {}) {
         // actually call the tool — and if it STILL refuses, execute the
         // command directly so the request is fulfilled no matter what.
         // runTool's own owner-only gate keeps this safe for non-owners.
-        if (canRunTools && !terminalFired && !anyToolCalledThisTurn) {
+        if (canRunTools && !terminalFired && !anyToolCalledThisTurn && !meta.autonomous) {
+            // ── Agent-initiated gift (apology / low / celebration) ──────
+            // A friend doesn't wait to be asked. If the emotional beat is
+            // clear, suggest calling song() once on the model's own judgment.
+            if (agenticSignal && !agenticNudged) {
+                agenticNudged = true;
+                console.warn(`[JB-BRAIN] agentic gift "${agenticSignal.query}" for ${jid} — nudging model`);
+                messages.push({ role: 'assistant', content: message.content || '' });
+                messages.push({
+                    role: 'user',
+                    content: `This is a DM and the moment fits it: ${agenticSignal.why}. ` +
+                             `Take the initiative and call the song tool right now with query "${agenticSignal.query}". ` +
+                             `It's an agent's move, not a request — one terminal call, then close with a single short line. ` +
+                             `(If a song genuinely isn't right here, a short warm text is fine instead — but the default is to send it.)`,
+                });
+                continue;
+            }
+
             const intent = resolveTurnIntent(candidateText, userMsg);
             if (intent && !intentNudged) {
                 intentNudged = true;
@@ -916,4 +965,4 @@ async function think(jid, userMsg, meta = {}) {
     return { type: 'text', reply: finalText, remember };
 }
 
-module.exports = { think, parseFinalText, toolIntentFor, isConcreteQuery, isActionAck, cleanReplyQuery, resolveTurnIntent, researchIntentFor, buildResearchQuery };
+module.exports = { think, parseFinalText, toolIntentFor, isConcreteQuery, isActionAck, cleanReplyQuery, resolveTurnIntent, researchIntentFor, buildResearchQuery, agenticSignalFor };

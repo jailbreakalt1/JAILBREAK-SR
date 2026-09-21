@@ -152,14 +152,20 @@ const config = {
     },
 
 
-    // ── Autonomous check-in ("miss you" feature) ──────────────────────────────
-    // JB proactively messages DM users who haven't chatted in a while.
-    // thresholdHours: how long quiet before JB checks in
-    // cooldownHours:  minimum gap between two check-ins to the same person
+    // ── Autonomous initiative (agentic "friend-mode") ───────────────────────
+    // JB proactively takes the wheel in DMs: when someone's been quiet long
+    // enough, it opens a window and lets the FULL brain (tool-calling enabled)
+    // decide what to say — possibly sending a song, checking weather, etc.
+    // thresholdHours: how long quiet before an initiative window opens
+    // cooldownHours:  minimum gap between two windows for the same person
+    // intervalMinutes: how often the scheduler evaluates (default 20min)
+    // dailyCeil:      max autonomous sends per day, global
     checkIn: {
-        enabled:        process.env.CHECKIN_ENABLED !== 'false',
-        thresholdHours: parseInt(process.env.CHECKIN_THRESHOLD_HOURS, 10) || 24,
-        cooldownHours:  parseInt(process.env.CHECKIN_COOLDOWN_HOURS,  10) || 48,
+        enabled:         process.env.CHECKIN_ENABLED !== 'false',
+        thresholdHours:  parseInt(process.env.CHECKIN_THRESHOLD_HOURS, 10) || 12,
+        cooldownHours:   parseInt(process.env.CHECKIN_COOLDOWN_HOURS,  10) || 24,
+        intervalMinutes: parseInt(process.env.CHECKIN_INTERVAL_MINUTES, 10) || 20,
+        dailyCeil:       parseInt(process.env.CHECKIN_DAILY_CEIL,      10) || 2,
     },
     // AI access control
     ai: {
