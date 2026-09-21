@@ -511,10 +511,15 @@ async function slotB(messages, tools) {
     return message;
 }
 
-// ── Slot C: RESCUE — Llama-3.1-8B, key 1, OpenAI SDK ────────────────────────
-// Trims the ORIGINAL history to the last 8 turns to stay inside 128K —
-// but never touches in-loop tool-call scratch (everything from
-// `historyBoundary` onward), so assistant/tool message pairing stays intact.
+// ── Slot C: RESCUE — Nemotron-3-Super, key 1, OpenAI SDK ─────────────────────
+// Pastes the ORIGINAL history's last `SLOTC_HISTORY_TURNS` turns so rescue
+// rounds stay fast and cheap regardless of how big the chat has grown (the
+// full window still flows to SLOT A). Keeps 2x the old window (8 → 16) to
+// pair with the wider memory context — but never touches in-loop tool-call
+// scratch (everything from `historyBoundary` onward), so assistant/tool
+// message pairing stays intact.
+
+const SLOTC_HISTORY_TURNS = 16;
 
 async function slotC(messages, tools, historyBoundary) {
     const model = MODELS.RESCUE;
@@ -523,7 +528,7 @@ async function slotC(messages, tools, historyBoundary) {
 
     console.log(`[JB-BRAIN] slot C rescue: ${model.id()}`);
 
-    const prefix  = [messages[0], ...messages.slice(1, historyBoundary).slice(-8)];
+    const prefix  = [messages[0], ...messages.slice(1, historyBoundary).slice(-SLOTC_HISTORY_TURNS)];
     const scratch = messages.slice(historyBoundary);
     const trimmed = [...prefix, ...scratch];
 

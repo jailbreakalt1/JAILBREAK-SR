@@ -4,6 +4,11 @@ All notable changes to JAILBREAK-SR.
 
 ## [Unreleased]
 
+### Added — wider conversation context window
+- **`config.memory`** (env-overridable: `MEMORY_MAX_TURNS`, `MEMORY_SUMMARIZE_THRESHOLD`, `MEMORY_KEEP_RECENT`): JB's long-term memory shape is now config-driven instead of baked-in constants.
+- **Defaults roughly doubled**: hard cap `maxTurns` 40→**64**, AI-summary fold threshold `summarizeThreshold` 25→**40**, verbatim-recent window `keepRecent` 20→**30**. A long chat now keeps 30 real turns word-for-word (was 20) plus the AI-condensed summary — that's 50% more vivid recall at trivial cost (all models have 128K–1M native context).
+- **Rescue slot window doubled**: `ai.js` slot C now pastes the last `SLOTC_HISTORY_TURNS` = **16** history turns (was 8) so rescue rounds keep up with the wider memory, still cheap/fast.
+
 ### Added — agentic autonomy ("friend mode")
 - **In-conversation initiative**: new `AUTONOMY (FRIEND-INITIATIVE)` persona section + `agenticSignalFor()` classifier in `brain/ai.js`. In DMs, JB now takes the wheel on emotional beats — someone apologizes → it proactively calls the `song` tool with "Sorry" and gifts them the track; rough day/stress → one chill comfort track; celebration/win → a hype track. Nudge-only (never forced), groups excluded, one terminal tool per turn.
 - **Out-of-band initiative engine** (`brain/checkIn.js` rewritten): after a DM is quiet past `thresholdHours`, a scheduler opens an initiative **window** (every `intervalMinutes`) and lets the FULL tool-capable brain decide — fire a real tool (send a song, fetch weather, etc.) or just a short line. Implements the "actually agentic" tier: the model owns the judgement, not a canned script. Saved to memory so the next user message continues the thread.

@@ -122,6 +122,22 @@ const config = {
         enabled: process.env.XP_ENABLED !== 'false', // earned on human messages
     },
 
+    // ── Conversation context window (long-term memory shape) ──────────────
+    // How much of a chat JB actually remembers. All three models have huge
+    // native context (128K–1M tokens); the values below are what JB keeps on
+    // disk per chat, so the API prompt is bounded AND useful:
+    //   • maxTurns:           hard ceiling on stored messages (never exceeded)
+    //   • summarizeThreshold: start folding old turns into an AI summary once
+    //                         a chat passes this many stored messages
+    //   • keepRecent:         most-recent turns kept VERBATIM after a fold
+    // Bigger = remembers further back, costs a bit more prompt latency per
+    // message. Defaults: 64 / 40 / 30 (was 40 / 25 / 20).
+    memory: {
+        maxTurns:           parseInt(process.env.MEMORY_MAX_TURNS, 10) || 64,
+        summarizeThreshold: parseInt(process.env.MEMORY_SUMMARIZE_THRESHOLD, 10) || 40,
+        keepRecent:         parseInt(process.env.MEMORY_KEEP_RECENT, 10) || 30,
+    },
+
     // ── Voice-note transcription (STT) ───────────────────────────────────────
     // Tries the omni vision model to transcribe ptt voice notes before music
     // detection. Circuit-breaks after repeated failures so it never hangs the

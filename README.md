@@ -119,8 +119,10 @@ Node backend; `GET /api/health` confirms it's up.
 
 Center of truth is `config.js` — baked API keys, owner numbers
 (`OWNER_NUMBERS`), prefix, model slots, quiet hours
-(`config.quiet`), XP (`config.xp`), STT (`config.stt`). Anything can be
-overridden without touching code via the matching var in `.env`.
+(`config.quiet`), XP (`config.xp`), STT (`config.stt`), conversation context
+window (`config.memory` — how many turns JB keeps verbatim vs. folds into an
+AI summary). Anything can be overridden without touching code via the matching
+var in `.env`.
 
 ## Autonomy ("friend mode")
 

@@ -5,9 +5,10 @@
  * Persisted to disk as JSON under database/memory/<phone>.json
  *
  * Strategy:
- *  - Last 20 messages always kept verbatim
- *  - Once > SUMMARIZE_THRESHOLD turns, older turns condensed via AI (fire-and-forget)
- *  - MAX_TURNS hard cap guards against a stalled summarizer
+ *  - Last `keepRecent` messages always kept verbatim
+ *  - Once > `summarizeThreshold` turns, older turns condensed via AI (fire-and-forget)
+ *  - `maxTurns` hard cap guards against a stalled summarizer
+ *  - All three knobs live in config.memory (env-overridable) — see config.js
  *  - Summarizer tries key 2 (DeepSeek V4 Pro) first, then key 1 (Llama-3.1-8B) as fallback
  *  - Both summary attempts have 18s hard timeouts
  */
@@ -19,9 +20,10 @@ const { getClient } = require('./nimClient');
 const axios  = require('axios');
 const config = require('../config');
 
-const MAX_TURNS           = 40;
-const KEEP_RECENT         = 20;
-const SUMMARIZE_THRESHOLD = 25;
+const MEMORY_CFG       = config.memory || {};
+const MAX_TURNS           = MEMORY_CFG.maxTurns           || 64;
+const KEEP_RECENT         = MEMORY_CFG.keepRecent         || 30;
+const SUMMARIZE_THRESHOLD = MEMORY_CFG.summarizeThreshold || 40;
 const SUMMARY_TAG         = '[MEMORY SUMMARY]';
 const SUMMARY_TIMEOUT     = 18000;
 const MAX_SONGS_TRACKED   = 15;
