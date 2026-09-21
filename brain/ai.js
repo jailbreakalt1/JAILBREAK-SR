@@ -607,6 +607,21 @@ async function callBrainOnce(messages, tools, historyBoundary, jid) {
 
 // ── Main think() — the agentic loop ───────────────────────────────────────────
 
+// Read-only data tools are safe to run once per turn: if the model re-calls
+// one with identical arguments (a common wobble), we return the result we
+// already have instead of burning another API call / seconds of latency.
+const CACHEABLE_DATA_TOOLS = new Set([
+    'weather', 'time', 'search', 'joke', 'fact', 'quote', 'riddle', 'advice',
+    'magic8', 'trivia', 'horo', 'translate', 'dict', 'wiki', 'calc', 'base64',
+    'hash', 'crypto', 'exchange', 'ipinfo', 'xptop',
+]);
+
+function cacheableKey(tc) {
+    const name = tc?.function?.name;
+    if (!name || !CACHEABLE_DATA_TOOLS.has(name)) return null;
+    return `${name}|${String(tc.function.arguments || '').trim()}`;
+}
+
 /**
  * @param {string} jid     - WhatsApp JID
  * @param {string} userMsg - Raw message text (or a synthetic [SHAZAM]/system note)
@@ -622,6 +637,22 @@ async function think(jid, userMsg, meta = {}) {
     }
 
     memory.add(jid, 'user', userMsg);
+
+    // Turn-scoped result cache for read-only data tools — see CACHEABLE_DATA_TOOLS.
+    const toolCache = new Map();
+    const cachedRun = async (tc) => {
+        const key = cacheableKey(tc);
+        if (key) {
+            const hit = toolCache.get(key);
+            if (hit) {
+                console.log(`[JB-BRAIN] tool cache hit: ${key.slice(0, 80)}`);
+                return hit;
+            }
+        }
+        const result = await runTool(tc, { sock: meta.sock, msg: meta.msg, commands: meta.commands, brainExtra: meta.brainExtra });
+        if (key) toolCache.set(key, result);
+        return result;
+    };
 
     const history = memory.get(jid);
     const knownSongs = memory.getSongs(jid);
@@ -708,7 +739,7 @@ async function think(jid, userMsg, meta = {}) {
                 if (typeof meta.onTool === 'function') {
                     try { meta.onTool(toolName); } catch (_) {}
                 }
-                const result = await runTool(tc, { sock, msg, commands, brainExtra });
+                const result = await cachedRun(tc);
                 markToolFired(toolName);
                 anyToolCalledThisTurn = true;
                 if (result.askedAlready && result.toolName) noRetryTools.add(result.toolName);
@@ -751,7 +782,7 @@ async function think(jid, userMsg, meta = {}) {
                     if (typeof meta.onTool === 'function') {
                         try { meta.onTool(toolName); } catch (_) {}
                     }
-                    const result = await runTool(tc, { sock, msg, commands, brainExtra });
+                    const result = await cachedRun(tc);
                     markToolFired(toolName);
                     anyToolCalledThisTurn = true;
                     if (result.askedAlready && result.toolName) noRetryTools.add(result.toolName);
@@ -804,7 +835,7 @@ async function think(jid, userMsg, meta = {}) {
                 const forced = { id: `forced_research_${Date.now()}`, type: 'function',
                     function: { name: 'search', arguments: JSON.stringify({ query: research.query }) } };
                 messages.push({ role: 'assistant', content: null, tool_calls: [forced] });
-                const forcedResult = await runTool(forced, { sock, msg, commands, brainExtra });
+                const forcedResult = await cachedRun(forced);
                 markToolFired('search');
                 anyToolCalledThisTurn = true;
                 searchFired = true;
@@ -839,7 +870,7 @@ async function think(jid, userMsg, meta = {}) {
                 const forced = { id: `forced_${Date.now()}`, type: 'function',
                     function: { name: intent.command, arguments: JSON.stringify({ query: intent.query }) } };
                 messages.push({ role: 'assistant', content: null, tool_calls: [forced] });
-                const forcedResult = await runTool(forced, { sock, msg, commands, brainExtra });
+                const forcedResult = await cachedRun(forced);
                 markToolFired(intent.command);
                 anyToolCalledThisTurn = true;
                 messages.push({ role: 'tool', tool_call_id: forced.id, content: forcedResult.content });

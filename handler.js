@@ -16,6 +16,10 @@ const apiTools   = require('./tools/api');
 const buttonContext = require('./tools/buttonContext');
 const songRecommend = require('./brain/songRecommend');
 const toolRunner = require('./brain/toolRunner');
+const stt        = require('./brain/stt');
+const celebrate  = require('./tools/celebrate');
+const xpTools    = require('./tools/xp');
+const blacklist  = require('./tools/blacklist');
 
 const badWords = [
   'fuck', 'fck', 'fuk', 'fvck', 'shit', 'sh1t', 'ass', 'azz', 'arse',
@@ -175,6 +179,67 @@ async function isBotAdmin(sock, jid) {
 // character ("yo i heard X by Y, hold on i gatchu"), then downloads and sends
 // the track automatically — no follow-up command needed from the user.
 const AUTO_SHAZAM_BRAIN_TIMEOUT = 20000;
+
+/**
+ * Voice-note → text → brain. Returns true when STT did NOT handle it (so the
+ * caller should fall back to auto-shazam), false when a speech transcript was
+ * processed and replied to.
+ */
+async function handleVoiceSTT(sock, msg, { from, sender, pushName, commands }) {
+  try {
+    const audioMessage = normalizeMessageContent(msg.message)?.audioMessage;
+    if (!audioMessage?.ptt) return true;              // music clip, not a voice note
+    if (!config.stt?.enabled) return true;
+
+    const buf = await downloadMediaMessage(
+      msg, 'buffer', {},
+      { logger: undefined, reuploadRequest: sock.updateMediaMessage }
+    );
+    if (!buf?.length) return true;
+
+    const text = await stt.transcribe(buf, audioMessage.mimetype);
+    if (!text) return true;                           // music / failure → shazam path
+
+    // Speech heuristic — a music transcription comes back as short symbol
+    // noise or a tiny token count; real speech has words and letters.
+    const letters = (text.match(/[a-zA-Z]/g) || []).length;
+    const words = text.trim().split(/\s+/).filter(Boolean).length;
+    if (words < 3 || letters / Math.max(text.length, 1) < 0.55) return true;
+
+    console.log(chalk.gray('  ⧈ ') + chalk.yellow('VOICE') + chalk.gray(' ── ') + chalk.white(senderNum) + chalk.gray(' heard: ') + chalk.white(JSON.stringify(text.slice(0, 80))));
+
+    await sock.sendPresenceUpdate('composing', from).catch(() => {});
+    await sock.sendMessage(from, { text: `🦻 heard it — "${text.slice(0, 200)}"`, __skipStyle: true }, { quoted: msg }).catch(() => {});
+
+    const brainExtra = {
+      from, sender, pushName,
+      getCommands: () => commands,
+      reply: async (replyText, extraContent = {}) => {
+        await sock.sendMessage(from, { text: String(replyText), ...extraContent }, { quoted: msg, __skipStyle: true });
+      },
+      react: async () => {},
+    };
+
+    const result = await brain.think(
+      from, `[Voice note transcribed by the user: "${text}"]\n${text}`,
+      { pushName, sender, sock, msg, commands, brainExtra }
+    );
+    if (result?.remember) userProfiles.save(from, result.remember);
+    if (result?.reply) {
+      const voiceSent =
+        !from.endsWith('@g.us') && tts.tick(from) &&
+        await tts.sendVoiceReply(sock, from, result.reply);
+      if (!voiceSent) {
+        await sock.sendMessage(from, { text: result.reply, __skipStyle: true }, { quoted: msg }).catch(() => {});
+      }
+    }
+    await sock.sendPresenceUpdate('paused', from).catch(() => {});
+    return false;
+  } catch (err) {
+    console.error(chalk.red('[VOICE-STT] error:'), err.message);
+    return true;
+  }
+}
 
 async function handleAutoShazam(sock, msg, { from, sender, pushName, commands, mediaType }) {
   const senderNum = sender?.split('@')[0] || '?';
@@ -478,6 +543,21 @@ async function handleMessage(sock, msg) {
   try {
     songRecommend.clear(sender);
 
+    // ── Bot-wide ban gate (owner always passes) ───────────────────────────
+    const banNumber = cleanNumber(senderNum);
+    if (config.ownerNumber && !config.ownerNumber.includes(banNumber) && blacklist.isBanned(banNumber)) {
+      console.log(chalk.gray('  ⧈ ') + chalk.cyan('BAN') + chalk.gray(' ── ') + chalk.white(banNumber) + chalk.red(' BLOCKED'));
+      return;
+    }
+
+    // ── Birthday wishes — fires once per day for anyone celebrating today ──
+    try { celebrate.maybeCelebrate(sock).catch(() => {}); } catch (_) {}
+
+    // ── XP: human messages earn activity points (rate-limited 1/min) ──────
+    if (!msg.key?.fromMe && config.xp?.enabled) {
+      try { xpTools.bump(banNumber || cleanNumber(sender), pushName); } catch (_) {}
+    }
+
     if (!from || !msg.message) { console.log(chalk.gray('  ⧈ ') + chalk.cyan('HANDLER') + chalk.gray(' ── ') + chalk.white(senderNum) + chalk.red(' NO MSG')); return; }
 
     const messageType = Object.keys(msg.message).find(k => k !== 'messageContextInfo');
@@ -513,7 +593,11 @@ async function handleMessage(sock, msg) {
 
       if (isDM && isAudioMessage && !body.trim()) {
         console.log(chalk.gray('  ⧈ ') + chalk.cyan('AUTO-SHAZAM') + chalk.gray(' [audio→brain]') + chalk.gray(' ── ') + chalk.white(senderNum));
-        await handleAutoShazam(sock, msg, { from, sender, pushName, commands, mediaType: 'audio' });
+        // ptt voice notes → try speech-to-text first, fall back to music detection
+        const notHandled = await handleVoiceSTT(sock, msg, { from, sender, pushName, commands });
+        if (notHandled) {
+          await handleAutoShazam(sock, msg, { from, sender, pushName, commands, mediaType: 'audio' });
+        }
         return;
       }
 
@@ -898,6 +982,9 @@ async function handleMessage(sock, msg) {
 
   } catch (err) {
     console.error(chalk.gray('  ⧈ ') + chalk.red('ERR') + chalk.gray(' ── ') + chalk.white(senderNum) + chalk.red(' ' + err.message));
+    try {
+      await sock.sendMessage(from, { text: 'that one broke on my end — try again in a sec.' }, { quoted: msg }).catch(() => {});
+    } catch (_) {}
   }
 }
 
@@ -1024,25 +1111,40 @@ async function handleGroupUpdate(sock, update) {
     const memberCount   = groupMetadata.participants?.length || 0;
 
     if (action === 'add' && settings.welcome) {
-      for (const rawParticipant of participants) {
-        const participant = await resolvePhoneJid(sock, rawParticipant);
-        const user = cleanNumber(participant);
-        let msg = settings.welcomeMessage
-          .replace(/@user/g, `@${user}`)
-          .replace(/@group/g, groupName)
-          .replace(/groupDesc/g, groupDesc)
-          .replace(/#memberCount/g, memberCount)
-          .replace(/time/g, new Date().toLocaleString());
-        await sock.sendMessage(jid, { text: msg, mentions: [participant] });
+      const welcomeCfg = settings.welcome;
+      const enabled = typeof welcomeCfg === 'object' ? !!welcomeCfg.enabled : !!welcomeCfg;
+      const template = typeof welcomeCfg === 'object'
+        ? (welcomeCfg.text || 'Welcome to the group, @name! 🎉')
+        : (settings.welcomeMessage || 'Welcome @user to @group! 👋');
+      if (enabled) {
+        for (const rawParticipant of participants) {
+          const participant = await resolvePhoneJid(sock, rawParticipant);
+          const user = cleanNumber(participant);
+          const msg = template
+            .replace(/@name/g, `@${user}`)
+            .replace(/@user/g, `@${user}`)
+            .replace(/@group/g, groupName)
+            .replace(/groupDesc/g, groupDesc)
+            .replace(/#memberCount/g, memberCount)
+            .replace(/time/g, new Date().toLocaleString());
+          await sock.sendMessage(jid, { text: msg, mentions: [participant] });
+        }
       }
     }
 
     if (action === 'remove' && settings.goodbye) {
-      for (const rawParticipant of participants) {
-        const participant = await resolvePhoneJid(sock, rawParticipant);
-        const user = cleanNumber(participant);
-        let msg = settings.goodbyeMessage.replace(/@user/g, `@${user}`);
-        await sock.sendMessage(jid, { text: msg, mentions: [participant] });
+      const goodbyeCfg = settings.goodbye;
+      const enabled = typeof goodbyeCfg === 'object' ? !!goodbyeCfg.enabled : !!goodbyeCfg;
+      const template = typeof goodbyeCfg === 'object'
+        ? (goodbyeCfg.text || 'See you later, @name! 👋')
+        : (settings.goodbyeMessage || 'Goodbye @user 👋');
+      if (enabled) {
+        for (const rawParticipant of participants) {
+          const participant = await resolvePhoneJid(sock, rawParticipant);
+          const user = cleanNumber(participant);
+          const msg = template.replace(/@name/g, `@${user}`).replace(/@user/g, `@${user}`);
+          await sock.sendMessage(jid, { text: msg, mentions: [participant] });
+        }
       }
     }
   } catch (err) {

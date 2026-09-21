@@ -109,6 +109,28 @@ const config = {
         modelSlotC: process.env.NVIDIA_SLOT_C_MODEL || 'nvidia/nemotron-3-super-120b-a12b',
     },
 
+    // ── Quiet hours ──────────────────────────────────────────────────────────
+    // Bot stays proactive (check-ins, reminders, auto-messages) SILENT during
+    // this window — it still answers when YOU message it.
+    quiet: {
+        start: parseInt(process.env.QUIET_START, 10) || 22, // 24h local clock
+        end:   parseInt(process.env.QUIET_END,   10) || 6,
+    },
+
+    // ── XP / levels / streaks ────────────────────────────────────────────────
+    xp: {
+        enabled: process.env.XP_ENABLED !== 'false', // earned on human messages
+    },
+
+    // ── Voice-note transcription (STT) ───────────────────────────────────────
+    // Tries the omni vision model to transcribe ptt voice notes before music
+    // detection. Circuit-breaks after repeated failures so it never hangs the
+    // message loop on an unsupported endpoint.
+    stt: {
+        enabled: process.env.STT_ENABLED !== 'false',
+        timeoutMs: 15000,
+    },
+
     // ── AI Eyes + memory summariser (NVIDIA NIM, OpenAI SDK) ──────────────
     // Separate key from above — used for:
     //   • SLOT B — fallback text brain, tried last (brain/ai.js)

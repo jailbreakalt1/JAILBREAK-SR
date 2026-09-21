@@ -132,6 +132,13 @@ setInterval(() => {
   processedMessages.clear();
 }, 5 * 60 * 1000); // Every 5 minutes
 
+// RSS/heap heartbeat — surface memory creep on low-RAM phones before it OOMs
+setInterval(() => {
+  const mem = process.memoryUsage();
+  const mins = Math.round(process.uptime() / 60);
+  console.log(`[HEALTH] rss=${(mem.rss / 1048576).toFixed(0)}MB heap=${(mem.heapUsed / 1048576).toFixed(0)}MB external=${(mem.external / 1048576).toFixed(0)}MB uptime=${mins}m`);
+}, 60 * 1000);
+
 // Custom Pino logger with suppression for Baileys noise
 const createSuppressedLogger = (level = 'silent') => {
   const forbiddenPatterns = [

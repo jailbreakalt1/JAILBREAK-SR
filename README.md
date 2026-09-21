@@ -51,25 +51,76 @@ Node backend; `GET /api/health` confirms it's up.
 
 ## Commands
 
+**Media & songs**
 | Command | Aliases | Description |
 |---------|---------|-------------|
 | `.song <query>` | `.play`, `.music` | Download song as audio |
-| `.video <query>` | `.ytv`, `.ytmp4` | Download YouTube video as MP4 |
+| `.video <query>` | `.ytv`, `.ytmp4` | YouTube video as MP4 |
 | `.lyrics <query>` | `.lyric` | Song lyrics (Genius) |
-| `.weather <city>` | `.w` | Weather (OpenWeatherMap) |
+| `.find`, `.instagram` | `.ig`, `.reels` | Media links + social downloads |
+| `.viewonce` | | View-once media save (owner) |
+
+**Info & brains**
+| Command | Aliases | Description |
+|---------|---------|-------------|
 | `.ai <msg>` | `.ask`, `.jb` | Straight to the brain |
 | `.search <q>` | | Web search (Firecrawl) |
 | `.img <q>` | `.image` | Image search |
-| `.time` | | Time/date context |
-| `.remind <claim>` | | Reminders |
-| `.spy <claim>` | | Address/city lookup |
-| `.find`, `.instagram`, `.viewonce`, `.songguess` | | Media + games |
+| `.weather <city>` | `.w` | Weather |
+| `.time` / `.date` | | Time/date context |
+| `.wiki <topic>` | `.wikipedia`, `.wp` | Wikipedia summary |
+| `.dict <word>` | `.dictionary`, `.define` | Dictionary |
+| `.translate <code> <text>` | `.tr`, `.tl` | Google translate |
+| `.ipinfo [ip]` | `.ip`, `.whereis` | IP / geo lookup |
+| `.crypto <coin>` | | Live coin price |
+| `.exchange <amt> <from> <to>` | | Live FX rates (ZWL too) |
+| `.horo <sign>` | `.horoscope` | Daily horoscope |
+| `.trivia` | | Random trivia question |
+| `.quote` / `.fact` / `.joke` / `.riddle` | | Random wisdom / laughs |
+
+**Utilities**
+| Command | Aliases | Description |
+|---------|---------|-------------|
+| `.tts <text>` | | Text-to-speech voice note |
+| `.sticker` | (with effects: `invert`, `bw`…) | Image/GIF → sticker |
+| `.qr <text>` | | QR code |
+| `.calc <expr>` | | Safe math calculator |
+| `.base64 <encode\|decode> <text>` | `.b64` | Base64 |
+| `.hash <text>` | | md5/sha1/sha256/sha512 |
+| `.ping` | | Latency / uptime / RSS |
+| `.npm <pkg>` | | npm package info |
+| `.github <repo>` | | Repo info |
+
+**Personal**
+| Command | Aliases | Description |
+|---------|---------|-------------|
+| `.remind <min> <text>` | | Reminders (`list`/`cancel`) |
+| `.note add\|list\|del\|clear` | | Private notes |
+| `.todo add\|done\|del\|clear` | `.tasks` | To-do list |
+| `.xp` / `.xptop` | | Activity points + leaderboard |
+| `.birthday` | `.bday` | Set & get wished (`.setbirthday <date>`) |
+| `.remember <k> <v>` | `.profile` | Remember facts about you |
+| `.recap` | | Recent context recap |
+
+**Group (admins)**
+| Command | Aliases | Description |
+|---------|---------|-------------|
+| `.welcome on\|off [msg]` / `.goodbye` | | Custom join/leave messages (`@name`) |
+| `.group promote\|demote\|kick\|add\|link\|revoke\|name\|desc\|open\|close\|tagall\|bye` | | Group admin toolkit |
+| `.sudo allow <cmd>` | `.sallow` | Allow a command in this group |
+
+**Owner**
+| Command | Aliases | Description |
+|---------|---------|-------------|
+| `.ban <num>` / `.unban <num>` | | Bot-wide ban gate |
+| `.restart` | | Restart cleanly (start.sh auto-respawns) |
 
 ## Config
 
 Center of truth is `config.js` — baked API keys, owner numbers
-(`OWNER_NUMBERS`), prefix, model slots, check-in/anti-spam tuning. Anything can
-be overridden without touching code via the matching var in `.env`.
+(`OWNER_NUMBERS`), prefix, model slots, check-in/anti-spam tuning, quiet hours
+(`config.quiet`), XP (`config.xp`), STT (`config.stt`). Anything can be
+overridden without touching code via the matching var in `.env`.
 
 ## Git hygiene
 

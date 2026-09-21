@@ -109,6 +109,16 @@ async function sendCheckIn(jid, pushName, hoursAway) {
 async function runChecks() {
     if (!_sock || !_config?.checkIn?.enabled) return;
 
+    // Quiet hours: stay 100% silent during the night window (config.quiet)
+    const { nowInConfiguredTimezone } = require('../tools/timezone');
+    const q = _config.quiet || { start: 22, end: 6 };
+    const hour = nowInConfiguredTimezone().hour();
+    const quiet = q.start < q.end ? (hour >= q.start && hour < q.end) : (hour >= q.start || hour < q.end);
+    if (quiet) {
+        console.log(`[CHECKIN] quiet hours (${hour}:00) — skipping proactive checks`);
+        return;
+    }
+
     const cfg          = _config.checkIn;
     const thresholdMs  = (cfg.thresholdHours || 24) * 3600000;
     const cooldownMs   = (cfg.cooldownHours  || 48) * 3600000;

@@ -72,12 +72,12 @@ fi
 # ── 3. Export + persist env for yt-dlp/ffmpeg/Termux memory ─────────────────
 export YTDLP_BINARY="${YTDLP_BINARY:-$PREFIX/bin/yt-dlp}"
 export FFMPEG_BINARY="${FFMPEG_BINARY:-$PREFIX/bin/ffmpeg}"
-export NODE_OPTIONS="${NODE_OPTIONS:---max-old-space-size=256}"
+export NODE_OPTIONS="--max-old-space-size=256 --max-semi-space-size=32"
 
 for line in \
   "export YTDLP_BINARY=\$PREFIX/bin/yt-dlp" \
   "export FFMPEG_BINARY=\$PREFIX/bin/ffmpeg" \
-  "export NODE_OPTIONS=--max-old-space-size=256"; do
+  "export NODE_OPTIONS=--max-old-space-size=256 --max-semi-space-size=32"; do
   grep -qF "$line" "$HOME/.bashrc" 2>/dev/null || echo "$line" >> "$HOME/.bashrc"
 done
 say "env: YTDLP=$YTDLP_BINARY FFMPEG=$FFMPEG_BINARY NODE_OPTIONS=$NODE_OPTIONS"
@@ -117,6 +117,6 @@ sleep 1
 say "starting bot in tmux session 'bot' (Ctrl-B then d to leave, ./start.sh --attach to return)"
 tmux new-session -d -s bot
 tmux send-keys -t bot \
-  "export YTDLP_BINARY=$PREFIX/bin/yt-dlp; export FFMPEG_BINARY=$PREFIX/bin/ffmpeg; export NODE_OPTIONS=--max-old-space-size=256; while :; do node index.js; sleep 3; done" \
+  "export YTDLP_BINARY=$PREFIX/bin/yt-dlp; export FFMPEG_BINARY=$PREFIX/bin/ffmpeg; export NODE_OPTIONS=--max-old-space-size=256\ --max-semi-space-size=32; while :; do node index.js; sleep 3; done" \
   Enter
 tmux attach -t bot
