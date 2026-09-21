@@ -247,6 +247,55 @@ function mediaIntentFromHistory(jidHistory, userMsg, knownSongs) {
     return null;
 }
 
+// ── Medium-clarifier intent ("as a song" / "as a video") ────────────────
+// A turn like "As a song" picks a KIND but carries no title, so neither the
+// tool-intent classifier (needs a verb) nor the bare-directive resolver sees
+// anything — the request silently dies as chat. Observed live: "Nisha ts
+// ndiwe here" → model acked "Nisha Ts Ndiwe Here — got it." → user "As a song"
+// → nothing fired. The clarifier supplies the medium and the immediately-
+// preceding turns already name the piece: pair them into a concrete intent.
+// Kind from the clarifier; title from the prior assistant turn (quoted /
+// "(Official…)" / leading title before an ack cut) or the prior user request.
+const MEDIUM_CLARIFIER_RE =
+    /^\s*(?:(?:(?:as|like|i\s+meant|i\s+mean|make\s+(?:it|that|this)\s+(?:into)?|want\s+(?:it|that|this)\s+as|it'?s|that'?s)\s+)?(?:a|an|the)?\s*)?(?:(?:official|full)\s+)?(?:song|music|audio|track|tune|mp3|video|vid|clip|lyrics?)(?:\s+(?:not|instead|version|form|then)\s*(?:(?:a|the|an)?\s*(?:video|vid|clip|song|music|lyrics?|version|form))?)?\s*[.!:;,]*\s*$/i;
+
+function mediumClarifierIntent(jidHistory, userMsg) {
+    if (!jidHistory || !Array.isArray(jidHistory)) return null;
+    const mm = MEDIUM_CLARIFIER_RE.exec(String(userMsg || ''));
+    if (!mm) return null;
+    if (userMsg.length > 40) return null;
+    const command = /\blyrics?\b/.test(mm[0]) ? 'lyrics' : /\b(?:video|vid|clip)\b/.test(mm[0]) ? 'video' : 'song';
+
+    const tail = jidHistory.slice(-4, -1);                    // immediate context only
+    for (let i = tail.length - 1; i >= 0; i--) {
+        const cur = tail[i];
+        if (!cur || typeof cur.content !== 'string') continue;
+        let q = null;
+        if (cur.role === 'assistant') {
+            q = titleFromMediaLine(cur.content);
+            if (!q) {
+                // Title-before-ack: only trust it when the reply actually
+                // separates a title from an acknowledgement — a plain chat
+                // reply ("sweet dreams") must never become a title.
+                const marker = /\b(?:got\s+it|one\s+sec|lem+me|on\s+it|hold\s+on|coming\s+up|pulling\s+it\s+up|fetch(?:ing)?|search(?:ing)?|finding|grabbing|waiting)\b/i;
+                const parts = cur.content.split(/\s*(?:—|–)\s*|\b(?:got\s+it|one\s+sec|lem+me|on\s+it|hold\s+on|coming\s+up|pulling\s+it\s+up)\b/i);
+                if (parts.length >= 2 && marker.test(cur.content)) {
+                    const maybe = cleanReplyQuery(parts[0]);
+                    if (!/^\s*(?:ok|okay|sure|alright|aight|done|great|cool|nice|perfect|wow|no|yeah|yes|sorry|apologies|wait|hang)\b/i.test(maybe)) q = maybe;
+                }
+            }
+        } else if (cur.role === 'user') {
+            q = cleanReplyQuery(cur.content);
+            if (/\b(?:what|who|how|why|when|where|is|are|does|did|do|can|could|have|has|shall)\b/i.test(q)) continue;
+        }
+        if (!q) continue;
+        q = String(q).replace(/^["'\s]+|["'\s]+$/g, '');
+        if (q.length < 6 || contentWordCount(q) < 2) continue;
+        return { command, query: q };
+    }
+    return null;
+}
+
 // ── Reply-side intent (acknowledgements) ────────────────────────────────
 // The model often *answers* with "got it, lemme fetch MOTA INOMHANYA", which
 // never reached a tool call. That reply text is itself evidence of intent —
@@ -958,6 +1007,8 @@ async function think(jid, userMsg, meta = {}) {
                         if (r && r.forceable) return r;                                   // user/reply named a real title
                         const h = mediaIntentFromHistory(history, userMsg, knownSongs);   // bare directive + prior result
                         if (h) return { command: h.command, query: h.query, forceable: isConcreteQuery(h.query) };
+                        const c = mediumClarifierIntent(history, userMsg);                // "as a song" + prior title
+                        if (c) return { command: c.command, query: c.query, forceable: isConcreteQuery(c.query) };
                         return r;                                                          // fuzzy — nudge-only, never force
                     })();
             if (intent && !intentNudged) {
@@ -1022,4 +1073,4 @@ async function think(jid, userMsg, meta = {}) {
     return { type: 'text', reply: finalText, remember };
 }
 
-module.exports = { think, parseFinalText, toolIntentFor, isConcreteQuery, isActionAck, cleanReplyQuery, resolveTurnIntent, researchIntentFor, buildResearchQuery, agenticSignalFor, mediaIntentFromHistory };
+module.exports = { think, parseFinalText, toolIntentFor, isConcreteQuery, isActionAck, cleanReplyQuery, resolveTurnIntent, researchIntentFor, buildResearchQuery, agenticSignalFor, mediaIntentFromHistory, mediumClarifierIntent };

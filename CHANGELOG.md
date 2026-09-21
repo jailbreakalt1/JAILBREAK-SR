@@ -4,6 +4,11 @@ All notable changes to JAILBREAK-SR.
 
 ## [Unreleased]
 
+### Fixed — "As a song" / medium clarifiers never triggered the tool
+- **Bug** (observed live): user sent `"Nisha ts ndiwe here"` → model acked with the exact title (`"Nisha Ts Ndiwe Here — got it. One sec, pulling it up."`) → user clarified `"As a song"` → **still nothing fired**. The clarifier carries a kind but no title, the title lives in the prior turns, and neither the verb-based classifier nor the bare-directive resolver (`send it`…) could join them — so the whole request died as chat.
+- **Fix**: new `mediumClarifierIntent()` in `brain/ai.js`. When the current turn is a pure medium clarifier ("as a song/video/lyrics", "i meant lyrics", "the song", …), it pairs the kind with the title from the immediately-prior turns — from the assistant's ack when it actually separates title from a chat ack (`title — got it / one sec / pulling it up`), or from the preceding user request. Priority in the net: in-turn forceable intent → bare directive → **medium clarifier** → fuzzy nudge-only. Titles are only trusted when genuinely title-like (quoted / "(Official …)" / dashed ack) so plain chat replies ("sweet dreams") never become search queries.
+- Verified: 9/9 unit cases + owner-jid E2E on the exact live exchange — `"As a song"` fires `song("Nisha Ts Ndiwe Here")` and delivers. Boot sweep 58/0.
+
 ### Fixed — "Send it" / bare directives never fired the tool
 - **Bug** (observed live): after a search had just identified a video, the owner's "Gimme" / "Send it" turns produced *text only* — no `video` tool call, no download, nothing sent. Cause: `toolIntentFor` rejects the bare imperative ("send" is a weak verb, tail is "it" → vague → null) and neither the user message nor the reply carried a title, so the intent net saw `null` and shrugged.
 - **Fix**: new `mediaIntentFromHistory()` in `brain/ai.js` — when the user sends a **bare directive** ("send it", "gimme", "do it", "yes", "it", "that") and the *previous assistant turn* in memory named a medium (video/song/lyrics), the concrete title is resolved from history and fed through the existing nudge→force pipeline. Known-songs list is the fallback for "the song / it".
