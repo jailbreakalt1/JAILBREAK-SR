@@ -34,6 +34,21 @@ const acquireDL = () => {
 };
 
 const sanitize = (value, fallback = 'song') => (value || fallback).replace(/[\\/:*?"<>|]+/g, '').trim() || fallback;
+
+// ── Document filename builder ──────────────────────────────────────────
+// YouTube titles already carry the artist prefix ("Nisha Ts - Ndiwe Here"),
+// so naively composing `${artist} - ${title}` double-prints the artist
+// ("Nisha Ts - Nisha Ts - Ndiwe Here"). Strip a leading artist prefix from
+// the title before re-attaching the artist.
+const buildFileName = (author, title, ext) => {
+  const a = sanitize(author, 'Unknown Artist');
+  const t = sanitize(title, 'song');
+  const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const prefixed = new RegExp(`^${esc(a.toLowerCase())}\\s*[-–—:|]?\\s*`, 'i');
+  const stripped = String(t).replace(prefixed, '').trim();
+  const cleaned = stripped.length >= 2 ? stripped : t;
+  return `${a} - ${cleaned}.${ext}`;
+};
 const buildJailbreakCaption = ({ info, author, ago, senderNum, emoji }) =>
 `⧯ *𝙹𝙰𝙸𝙻𝙱𝚁𝙴𝙰𝙺_𝙰𝙸* 𝙱𝚁𝙸𝙽𝙶𝚂 𝚈𝙾𝚄\n⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯\n◈ *𝚃𝙸𝚃𝙻𝙴 :* \`${info.title}\`\n◈ *𝙰𝚁𝚃𝙸𝚂𝚃 :* \`${author}\`\n◈ *𝚁𝙴𝙻𝙴𝙰𝚂𝙴𝙳 :* \`${ago}\`\n◈ *𝙳𝚄𝚁𝙰𝚃𝙸𝙾𝙽 :* \`${info.timestamp}\`\n⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯\n⎆ @${senderNum} _ENJOY_ ${emoji}\n  follow our channel\n> ☬ *𝚂𝙾𝚄𝚁𝙲𝙴 :* 𝙹𝙰𝙸𝙻𝙱𝚁𝙴𝙰𝙺 ☬`;
 
@@ -194,6 +209,7 @@ module.exports = {
   downloadToFile,
   normalizeAudioFromFile,
   sanitize,
+  buildFileName,
   buildJailbreakCaption,
 
   async execute(sock, msg, args, extra = {}) {
@@ -276,7 +292,7 @@ module.exports = {
 
       const senderJid = toPhoneJid(extra.sender || msg.key.participant || msg.key.remoteJid);
       const senderNum = cleanNumber(senderJid);
-      const fileName = `${sanitize(song.author, 'Unknown Artist')} - ${sanitize(payload?.title || song.info.title)}.${audio.ext}`;
+      const fileName = buildFileName(song.author, payload?.title || song.info.title, audio.ext);
 
       let q2;
       if (isDM) {

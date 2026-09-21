@@ -4,6 +4,10 @@ All notable changes to JAILBREAK-SR.
 
 ## [Unreleased]
 
+### Fixed — double artist in document filenames ("Nisha Ts - Nisha Ts - Ndiwe Here")
+- **Bug**: YouTube titles already carry the artist prefix ("Nisha Ts - Ndiwe Here"), and `song`/`find` built filenames as `${artist} - ${title}` — so the delivered document was "Nisha Ts - Nisha Ts - Ndiwe Here.mp3".
+- **Fix**: new `buildFileName(author, title, ext)` in `cmd/song.js` strips a leading artist prefix (any `- – — : |` separator, case-insensitive) from the title before re-attaching the artist; used by both `song.js` and `find.js`. Verified 8/8 filename cases.
+
 ### Fixed — "As a song" / medium clarifiers never triggered the tool
 - **Bug** (observed live): user sent `"Nisha ts ndiwe here"` → model acked with the exact title (`"Nisha Ts Ndiwe Here — got it. One sec, pulling it up."`) → user clarified `"As a song"` → **still nothing fired**. The clarifier carries a kind but no title, the title lives in the prior turns, and neither the verb-based classifier nor the bare-directive resolver (`send it`…) could join them — so the whole request died as chat.
 - **Fix**: new `mediumClarifierIntent()` in `brain/ai.js`. When the current turn is a pure medium clarifier ("as a song/video/lyrics", "i meant lyrics", "the song", …), it pairs the kind with the title from the immediately-prior turns — from the assistant's ack when it actually separates title from a chat ack (`title — got it / one sec / pulling it up`), or from the preceding user request. Priority in the net: in-turn forceable intent → bare directive → **medium clarifier** → fuzzy nudge-only. Titles are only trusted when genuinely title-like (quoted / "(Official …)" / dashed ack) so plain chat replies ("sweet dreams") never become search queries.

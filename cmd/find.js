@@ -100,7 +100,7 @@ const sendIdentifiedAudio = async (sock, msg, extra, { title, artists, ytUrl, th
       const { cleanNumber, toPhoneJid } = require('../tools/jidCleanser');
       const senderJid = toPhoneJid(extra.sender || msg.key.participant || msg.key.remoteJid);
       const senderNum = cleanNumber(senderJid);
-      const fileName  = `${songCmd.sanitize(artists, 'Unknown Artist')} - ${songCmd.sanitize(payload?.title || title)}.${audio.ext}`;
+      const fileName  = songCmd.buildFileName(artists, payload?.title || title, audio.ext);
       const songMeta  = { title: payload?.title || title, timestamp: '', thumbnail: thumbnail || FALLBACK_THUMBNAIL };
 
       await sock.sendMessage(from, {
