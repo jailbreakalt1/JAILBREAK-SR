@@ -4,6 +4,11 @@ All notable changes to JAILBREAK-SR.
 
 ## [Unreleased]
 
+### Fixed — "Yea" completion + delivery-promise acks never delivered the song
+- **Bug** (observed live): request chain `"Get me Kuhope"` → clarify → bot *"Here's Fusion 5 Mangwiro's "Kuhope" — … Sending it now."* → user `"Yea"` → **nothing was ever sent**. The classifier needs a fetch verb, "Yea" isn't in the bare-directive list (only `yes/yeah/yep/yup`), and the prior ack names a title with only a *delivery promise* — no "song/music/video" word — so the history resolver skipped it.
+- **Fix** in `brain/ai.js`: `yea` added to `BARE_DIRECTIVE_RE`; new `DELIVERY_PROMISE_RE` ("sending it now", "here you go", "coming up", …) lets the history resolver treat such acks as a real send; `titleFromMediaLine()` now resolves `"Artist's "Title""` possessives deterministically (→ `"Kuhope Fusion 5 Mangwiro"`) so the forced query hits the *right* version, and it never misreads casual chat ("sweet dreams", "no problem — done") as a title.
+- Verified: 8/8 unit cases + owner-jid E2E on the exact exchange — `"Yea"` nudges once then fires `song("Kuhope Fusion 5 Mangwiro")` and delivers. Boot sweep 58/0.
+
 ### Fixed — double artist in document filenames ("Nisha Ts - Nisha Ts - Ndiwe Here")
 - **Bug**: YouTube titles already carry the artist prefix ("Nisha Ts - Ndiwe Here"), and `song`/`find` built filenames as `${artist} - ${title}` — so the delivered document was "Nisha Ts - Nisha Ts - Ndiwe Here.mp3".
 - **Fix**: new `buildFileName(author, title, ext)` in `cmd/song.js` strips a leading artist prefix (any `- – — : |` separator, case-insensitive) from the title before re-attaching the artist; used by both `song.js` and `find.js`. Verified 8/8 filename cases.

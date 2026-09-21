@@ -211,16 +211,45 @@ function isConcreteQuery(q) {
 // (video/song/lyrics), treat that as this turn's pending action: nudge, then
 // force. knownSongs acts as the "the song / that track" fallback.
 const BARE_DIRECTIVE_RE =
-    /^\s*(?:gimme|give\s+(?:me|us)|send\s+(?:it|that|now)|send\b|fetch\s+(?:it|that)|download\s+(?:it|that)|play\s+(?:it|that)|do\s+(?:it|that|the\s+(?:thing|need))?|go\s*(?:ahead)?|go\b|yes|yeah|yep|yup|ok|okay|okaay|sure|alright|aight|bet|now|please|go\s+fetch|it|that|that\s+one|the\s+one)\s*[.!]*\s*$/i;
+    /^\s*(?:gimme|give\s+(?:me|us)|send\s+(?:it|that|now)|send\b|fetch\s+(?:it|that)|download\s+(?:it|that)|play\s+(?:it|that)|do\s+(?:it|that|the\s+(?:thing|need))?|go\s*(?:ahead)?|go\b|yes|yeah|yea|yep|yup|ok|okay|okaay|sure|alright|aight|bet|now|please|go\s+fetch|it|that|that\s+one|the\s+one)\s*[.!]*\s*$/i;
 
 function titleFromMediaLine(text) {
     if (!text || typeof text !== 'string') return null;
-    const quoted = text.match(/["'«“„]([^"'»”]{3,80})["'»”]/);
-    if (quoted) return cleanReplyQuery(quoted[1]);
+    const possessiveQuote = text.match(/["'«\u201c\u201e]([^"'»\u201d]{3,90})["'\u201d]/);
+    if (possessiveQuote) {
+        const title = cleanReplyQuery(possessiveQuote[1]);
+        // The quoted title is bound to its artist via a possessive:  "… Fusion 5
+        // Mangwiro's "Kuhope" …". Recover the artist, dropping any stray prefix
+        // ("Here's " from the model's ack) so it becomes "Kuhope Fusion 5
+        // Mangwiro" instead of a doubled / mangled artist.
+        let artist = text.slice(0, possessiveQuote.index).replace(/['\u2019]s\s*$/i, '').trim();
+        if (artist !== text.slice(0, possessiveQuote.index).trim()) {       // real possessive suffix
+            const inner = Math.max(artist.lastIndexOf("'"), artist.lastIndexOf("\u2019"));
+            if (inner >= 0) {
+                let k = inner + 1;
+                if (artist.charAt(k) === 's') k++;                          // skip possessive's "s"
+                const tail = artist.slice(k).trim();
+                if (/\s/.test(tail)) artist = tail;                          // "Here's X's" → X
+            }
+            artist = artist.replace(/\b(?:i['’]?m|here['’]?s?|my|your|we['’]?re|you['’]?re|they['’]?re|the|a|an|and|or|so|ok|okay|sure|alright|alrighty|got|wait|hold|hang|one\s+sec|coming|pulling|fetching|grabbing|sending|sent|enjoy|there|well|hmm|hey|hi)\b/gi, ' ').replace(/\s{2,}/g, ' ').trim();
+            if (artist.length < 2) artist = null;
+        } else {
+            artist = null;                                                    // no possessive → plain quoted title
+        }
+        return artist ? `${title} ${artist}`.trim() : title;
+    }
     const official = text.match(/([A-Za-z0-9][\w&'.,\-\s]{2,70}?)\s*\(Official\s*(?:Video|Audio|Lyrics|Music\s*Video)\)/i);
     if (official) return official[1].trim();
     return null;
 }
+
+// The model often acks a request WITHOUT naming a medium word — "Here's
+// "Kuhope" … Sending it now." — where only the delivery promise identifies
+// the turn as an actual send. Without this, the phrase "sending it now"
+// names a title but no "song/music/video" marker, so the bare-directive
+// resolver skips the turn and the follow-up "Yea" never delivers.
+const DELIVERY_PROMISE_RE =
+    /\b(?:sending\s+(?:it|now|it\s+now)|sent|here\s+(?:you\s+go|it\s+is|you\s+are)|on\s+(?:its|the)\s+way|coming\s+(?:right\s+up|up|soon)|pulling\s+(?:it|this)\s+up|fetching|grabbing|there\s+you\s+go)\b/i;
 
 function mediaIntentFromHistory(jidHistory, userMsg, knownSongs) {
     if (!jidHistory || !Array.isArray(jidHistory)) return null;
@@ -235,7 +264,8 @@ function mediaIntentFromHistory(jidHistory, userMsg, knownSongs) {
         const hasVideo  = VIDEO_MARKERS.test(m.content);
         const hasLyrics = LYRIC_MARKERS.test(m.content);
         const hasSong   = CONTENT_MARKERS.test(m.content);
-        if (!hasVideo && !hasLyrics && !hasSong) continue;
+        const promises  = DELIVERY_PROMISE_RE.test(m.content);
+        if (!hasVideo && !hasLyrics && !hasSong && !promises) continue;
 
         const command = hasLyrics && !hasVideo ? 'lyrics' : hasVideo ? 'video' : 'song';
         let query = titleFromMediaLine(m.content);
@@ -1073,4 +1103,4 @@ async function think(jid, userMsg, meta = {}) {
     return { type: 'text', reply: finalText, remember };
 }
 
-module.exports = { think, parseFinalText, toolIntentFor, isConcreteQuery, isActionAck, cleanReplyQuery, resolveTurnIntent, researchIntentFor, buildResearchQuery, agenticSignalFor, mediaIntentFromHistory, mediumClarifierIntent };
+module.exports = { think, parseFinalText, toolIntentFor, isConcreteQuery, isActionAck, cleanReplyQuery, resolveTurnIntent, researchIntentFor, buildResearchQuery, agenticSignalFor, mediaIntentFromHistory, mediumClarifierIntent, titleFromMediaLine };
