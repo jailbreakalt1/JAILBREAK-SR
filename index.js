@@ -66,6 +66,7 @@ const qrcode = require('qrcode-terminal');
 const config = require('./config');
 if (config.timezone && !process.env.TZ) process.env.TZ = config.timezone;
 const handler = require('./handler');
+const checkIn = require('./brain/checkIn');
 const { wrapSendMessageWithUniversalContext } = require('./tools/messageContext');
 const { cleanseMessage } = require('./tools/jidCleanser');
 const { handleAutoStatusIntercept, STATUS_JID } = require('./tools/statusIntercept');
@@ -343,6 +344,14 @@ async function startBot() {
       // Set bot status
       if (config.autoBio) {
         await sock.updateProfileStatus(`${config.botName} | Active 24/7`);
+      }
+
+      // Boot-time scheduler init — no longer lazy on first DM, so the
+      // autonomy engine runs even when only groups/no-body messages arrive.
+      try {
+        checkIn.init(sock, config, handler.getCommands());
+      } catch (e) {
+        console.error('[CHECKIN] init failed:', e.message);
       }
 
       // Cleanup old chats (keep only active ones, e.g., last touched <1 day)
