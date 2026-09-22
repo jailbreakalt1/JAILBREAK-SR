@@ -4,6 +4,13 @@ All notable changes to JAILBREAK-SR.
 
 ## [Unreleased]
 
+### Fixed — autonomy nagged (back-to-back check-ins without a reply)
+- Live: the owner's tier-1 (5m) window sent a weather check-in, and because nobody replied, the 15-min tier immediately sent a second weather message — felt like a duplicate one-after-the-other (memory showed both initiatives ~16 min apart).
+- **Fix** in `brain/checkIn.js`:
+  - **Reply-gate**: an escalated tier now opens only if the user has *messaged since the last proactive send* (`entry.ts > entry.lastCheckin`). No reply → the ladder holds; it never stacks a second unprompted message on top of an ignored one. A tier advances only after real engagement.
+  - **Vary the gesture**: the initiative prompt no longer leads the model toward "check the weather" (its go-to) and explicitly tells it not to repeat the same tool/gift as the last check-in.
+- Verified: 5/5 reply-gate cases; load sweep 90/0.
+
 ### Fixed — autonomy scheduler never started (lazy init required a text DM)
 - The `[AUTONOMY]` scheduler only initialized inside `handler.js`'s brain path — i.e. after a DM with a real text body from an allowed user. With `ai.access='owner'` (or group/no-body-only traffic) the gate below never passed, `init()` never ran, and the engine silently never fired ("never once" — this even masked the `_day` bug above from being visible).
 - **Fix** in `index.js`: `checkIn.init(sock, config, handler.getCommands())` now runs at connection open (boot-time), with the lazy DM path kept as an idempotent fallback. Pushed as `289eeee`.

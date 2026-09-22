@@ -107,8 +107,9 @@ async function runInitiative(jid, pushName, sinceLabel) {
     const note =
         `[AUTONOMOUS INITIATIVE] It's been ${sinceLabel} since ${name} last messaged you, ` +
         `no conversation is active, and this is your window to act like a real friend. ` +
-        `You are completely free to use any tool you genuinely want — check the weather, ` +
-        `look something up, send a song that fits the vibe. ${name}'s mood and your history ` +
+        `You may use a tool you genuinely need — but vary your approach; if the last ` +
+        `check-in in your history was already a weather/song/news drop, do something ` +
+        `different this time or just send a short line. ${name}'s mood and your history ` +
         `are yours to read. Judgement call, yours: keep it brief and thoughtful. ` +
         `If nothing is worth saying, a simple short line is still fine. Text replies ` +
         `should be under 18 words. One terminal tool max (the engine enforces it).`;
@@ -190,8 +191,11 @@ function waitEligible(jid, entry, cfg, now) {
     if (ladder.length && _escalate.has(jid)) {
         const tier = Math.min(entry.escalateTier || 0, ladder.length - 1);
         const waitMs = ladder[tier] * 60000;
+        const userReplied = !entry.lastCheckin || (entry.ts || 0) > entry.lastCheckin;
         return {
-            eligible: (now - (entry.ts || 0)) >= waitMs && (entry.lastCheckin ? now - entry.lastCheckin >= waitMs : true),
+            // Never stack a second proactive message while the user is still
+            // ignoring the first one — advance the tier only after they engage.
+            eligible: userReplied && (now - (entry.ts || 0)) >= waitMs && (entry.lastCheckin ? now - entry.lastCheckin >= waitMs : true),
             tier: tier + 1,
             label: `tier ${tier + 1}/${ladder.length} (${ladder[tier]}min)`,
         };
