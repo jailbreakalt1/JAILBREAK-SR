@@ -4,6 +4,10 @@ All notable changes to JAILBREAK-SR.
 
 ## [Unreleased]
 
+### Added — escalating initiative quiet-window ladder (fast autonomy testing)
+- `config.checkIn.escalateMinutes = [5, 15, 45, 60, 180, 240]` + `escalate: ['263717456159']`. Tracked jids climb a quiet-window ladder on each successful autonomous send (5m → 15m → 45m → 1h → 3h → 4h, cap clamps at the top step). Untracked numbers keep the fixed 12h threshold / 24h cooldown. Engine (`brain/checkIn.js`) resolves the per-jid wait via `waitEligible()`, records the tier in `checkInLastSeen.json`, and logs each window as `quiet tier N/6 (Xmin)`.
+- Testing: set `CHECKIN_INTERVAL_MINUTES=1 CHECKIN_DAILY_CEIL=12` on the live process so the 5-min tier is actually reachable (a 20-min scheduler would swallow it). 6/6 ladder unit cases + untracked-12h case pass; load sweep 90/0.
+
 ### Fixed — autonomy scheduler never fired (spammed errors on its own bookkeeping keys)
 - **Bug** (observed live, `[AUTONOMY] _day quiet 497245h — opening an initiative window` → `[AUTONOMY] failed: Cannot destructure property 'user' of 'jidDecode(...)`): the daily-budget bookkeeping keys `_day`/`_sends` live in the same `database/checkInLastSeen.json` map as real contacts, and `runChecks()` iterated **every** key as if it were a WhatsApp JID. So each cycle it opened initiative windows for `_day`/`_sends`, crashed on `jidDecode`, and the owner (still active, under the 12h threshold — intentional) never got one. "Never once" was both bug-spam *and* correct restraint on an active user.
 - **Fix** in `brain/checkIn.js`: `runChecks()` now skips `_`-prefixed bookkeeping keys, non-JID tokens, groups, and malformed entries before considering a window. Real contacts are unaffected.

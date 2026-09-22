@@ -32,6 +32,7 @@ let _config    = null;
 let _commands  = null;
 let _interval  = null;
 let _initialized = false;
+let _escalate  = new Set(); // tracked test jids that use the escalation ladder
 
 // ── Persistence ───────────────────────────────────────────────────────────────
 
@@ -98,13 +99,13 @@ function getLastSeen(jid) {
 // text. This is the "actually agentic" part: the model owns the judgement,
 // the scheduler just gives it a window.
 
-async function runInitiative(jid, pushName, hoursAway) {
+async function runInitiative(jid, pushName, sinceLabel) {
     const { think } = require('./ai');
     const memory    = require('./memory');
 
     const name = pushName ? pushName : 'the user';
     const note =
-        `[AUTONOMOUS INITIATIVE] It's been ${hoursAway} hours since ${name} last messaged you, ` +
+        `[AUTONOMOUS INITIATIVE] It's been ${sinceLabel} since ${name} last messaged you, ` +
         `no conversation is active, and this is your window to act like a real friend. ` +
         `You are completely free to use any tool you genuinely want — check the weather, ` +
         `look something up, send a song that fits the vibe. ${name}'s mood and your history ` +
@@ -163,14 +164,45 @@ function dailyBudget() {
     return { ceil, used: data._sends || 0 };
 }
 
-// Record one sent initiative: stamps the user's lastCheckin AND bumps the
-// daily counter in one atomic read-modify-write (no stale-snapshot clobbers).
+// Record one sent initiative: stamps the user's lastCheckin, bumps the
+// daily counter, and (for escalation-tracked users) climbs to the next tier
+// in one atomic read-modify-write (no stale-snapshot clobbers).
 function recordSent(jid) {
     const data = readData();
-    if (data[jid]) data[jid].lastCheckin = Date.now();
+    if (data[jid]) {
+        data[jid].lastCheckin = Date.now();
+        const ladder = _config?.checkIn?.escalateMinutes || [];
+        if (_escalate.has(jid) && ladder.length) {
+            const tier = Math.min(data[jid].escalateTier || 0, ladder.length - 1);
+            data[jid].escalateTier = Math.min(tier + 1, ladder.length - 1);
+        }
+    }
     if (!data._sends) data._sends = 0;
     data._sends += 1;
     writeData(data);
+}
+
+// Per-jid candidate check. Escalation-tracked test jids use the ladder
+// (each tier IS the minimum quiet window — no separate cooldown). Everyone
+// else keeps the fixed threshold + cooldown gates.
+function waitEligible(jid, entry, cfg, now) {
+    const ladder = cfg.escalateMinutes || [];
+    if (ladder.length && _escalate.has(jid)) {
+        const tier = Math.min(entry.escalateTier || 0, ladder.length - 1);
+        const waitMs = ladder[tier] * 60000;
+        return {
+            eligible: (now - (entry.ts || 0)) >= waitMs && (entry.lastCheckin ? now - entry.lastCheckin >= waitMs : true),
+            tier: tier + 1,
+            label: `tier ${tier + 1}/${ladder.length} (${ladder[tier]}min)`,
+        };
+    }
+    const thresholdMs = (cfg.thresholdHours || 24) * 3600000;
+    const cooldownMs  = (cfg.cooldownHours  || 48) * 3600000;
+    return {
+        eligible: (now - (entry.ts || 0)) >= thresholdMs && (entry.lastCheckin ? now - entry.lastCheckin >= cooldownMs : true),
+        tier: null,
+        label: `${cfg.thresholdHours || 24}h quiet`,
+    };
 }
 
 // ── Scheduler ────────────────────────────────────────────────────────────────
@@ -195,8 +227,6 @@ async function runChecks() {
     }
 
     const cfg          = _config.checkIn;
-    const thresholdMs  = (cfg.thresholdHours || 24) * 3600000;
-    const cooldownMs   = (cfg.cooldownHours  || 48) * 3600000;
     const now          = Date.now();
     const data         = readData();
 
@@ -205,17 +235,16 @@ async function runChecks() {
         if (!/@/.test(jid) || jid.endsWith('@g.us')) continue;   // DM jids only
         if (!entry || typeof entry !== 'object') continue;
 
-        const sinceMessage  = now - (entry.ts || 0);
-        const sinceCheckin  = entry.lastCheckin ? now - entry.lastCheckin : Infinity;
+        const sinceMessage = now - (entry.ts || 0);
+        const check = waitEligible(jid, entry, cfg, now);
+        if (!check.eligible) continue;                            // still active / within tier window
 
-        if (sinceMessage  < thresholdMs) continue;  // still active
-        if (sinceCheckin  < cooldownMs)  continue;  // already reached out recently
-
-        const hoursAway = Math.round(sinceMessage / 3600000);
-        console.log(`[AUTONOMY] ${jid.split('@')[0]} quiet ${hoursAway}h — opening an initiative window`);
+        const sinceHours = Math.round(sinceMessage / 3600000);
+        const sinceLabel = check.tier ? `${Math.round(sinceMessage / 60000)} minutes` : `${sinceHours} hours`;
+        console.log(`[AUTONOMY] ${jid.split('@')[0]} quiet ${check.label} — opening an initiative window`);
 
         try {
-            const text = await runInitiative(jid, entry.pushName, hoursAway);
+            const text = await runInitiative(jid, entry.pushName, sinceLabel);
             if (!text) {
                 console.log(`[AUTONOMY] ${jid.split('@')[0]} — nothing worth sending, skipped`);
                 continue;
@@ -255,6 +284,12 @@ function init(sock, config, commands) {
     _commands    = commands || null;
     _initialized = true;
 
+    _escalate = new Set(
+        (config?.checkIn?.escalate || []).map(
+            (n) => String(n).includes('@') ? n : `${n}@s.whatsapp.net`
+        )
+    );
+
     if (!config?.checkIn?.enabled) {
         console.log('[CHECKIN] disabled in config');
         return;
@@ -265,12 +300,14 @@ function init(sock, config, commands) {
     _interval = setInterval(runChecks, intervalMs);
 
     const cfg = config.checkIn;
+    const ladder = (cfg.escalateMinutes || []).map((m) => m >= 60 ? `${m / 60}h` : `${m}m`).join(' → ');
     console.log(
         `[AUTONOMY] scheduler started — ` +
         `initiative every ${cfg.intervalMinutes || 20}min, threshold: ${cfg.thresholdHours}h, ` +
         `cooldown: ${cfg.cooldownHours}h, daily cap: ${cfg.dailyCeil || 3}` +
+        (ladder ? `, escalation ladder: ${ladder} for ${[..._escalate].join(', ')}` : '') +
         (_commands ? ', tools ENABLED' : ', tools DISABLED')
     );
 }
 
-module.exports = { init, isInitialized, updateLastSeen, markCheckedIn, getLastSeen };
+module.exports = { init, isInitialized, updateLastSeen, markCheckedIn, getLastSeen, waitEligible };

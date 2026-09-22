@@ -176,12 +176,19 @@ const config = {
     // cooldownHours:  minimum gap between two windows for the same person
     // intervalMinutes: how often the scheduler evaluates (default 20min)
     // dailyCeil:      max autonomous sends per day, global
+    // escalateMinutes: escalating quiet-windows (minutes) for TRACKED test
+    //                  jids. Each successful send bumps the next window up the
+    //                  ladder (5m → 15m → 45m → 1h → …). Untracked users keep
+    //                  the fixed thresholdHours/cooldownHours behavior.
+    // escalate:       bare numbers ("2637…") OR full jids that get the ladder.
     checkIn: {
         enabled:         process.env.CHECKIN_ENABLED !== 'false',
         thresholdHours:  parseInt(process.env.CHECKIN_THRESHOLD_HOURS, 10) || 12,
         cooldownHours:   parseInt(process.env.CHECKIN_COOLDOWN_HOURS,  10) || 24,
         intervalMinutes: parseInt(process.env.CHECKIN_INTERVAL_MINUTES, 10) || 20,
         dailyCeil:       parseInt(process.env.CHECKIN_DAILY_CEIL,      10) || 2,
+        escalateMinutes: [5, 15, 45, 60, 180, 240],
+        escalate:        ['263717456159'],
     },
     // AI access control
     ai: {
