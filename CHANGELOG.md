@@ -4,6 +4,11 @@ All notable changes to JAILBREAK-SR.
 
 ## [Unreleased]
 
+### Fixed — autonomy scheduler never started (lazy init required a text DM)
+- The `[AUTONOMY]` scheduler only initialized inside `handler.js`'s brain path — i.e. after a DM with a real text body from an allowed user. With `ai.access='owner'` (or group/no-body-only traffic) the gate below never passed, `init()` never ran, and the engine silently never fired ("never once" — this even masked the `_day` bug above from being visible).
+- **Fix** in `index.js`: `checkIn.init(sock, config, handler.getCommands())` now runs at connection open (boot-time), with the lazy DM path kept as an idempotent fallback. Pushed as `289eeee`.
+- Verified live: scheduler starts at boot (`initiative every 1min, threshold: 12h, cooldown: …`), the first check opened `tier 1/6 (5min)` for the owner and the model autonomously fired the **weather** tool and DM'd a genuinely contextual line.
+
 ### Added — escalating initiative quiet-window ladder (fast autonomy testing)
 - `config.checkIn.escalateMinutes = [5, 15, 45, 60, 180, 240]` + `escalate: ['263717456159']`. Tracked jids climb a quiet-window ladder on each successful autonomous send (5m → 15m → 45m → 1h → 3h → 4h, cap clamps at the top step). Untracked numbers keep the fixed 12h threshold / 24h cooldown. Engine (`brain/checkIn.js`) resolves the per-jid wait via `waitEligible()`, records the tier in `checkInLastSeen.json`, and logs each window as `quiet tier N/6 (Xmin)`.
 - Testing: set `CHECKIN_INTERVAL_MINUTES=1 CHECKIN_DAILY_CEIL=12` on the live process so the 5-min tier is actually reachable (a 20-min scheduler would swallow it). 6/6 ladder unit cases + untracked-12h case pass; load sweep 90/0.
