@@ -201,7 +201,9 @@ async function runChecks() {
     const data         = readData();
 
     for (const [jid, entry] of Object.entries(data)) {
-        if (jid.endsWith('@g.us')) continue;
+        if (jid.startsWith('_')) continue;                       // bookkeeping (_day/_sends), not a jid
+        if (!/@/.test(jid) || jid.endsWith('@g.us')) continue;   // DM jids only
+        if (!entry || typeof entry !== 'object') continue;
 
         const sinceMessage  = now - (entry.ts || 0);
         const sinceCheckin  = entry.lastCheckin ? now - entry.lastCheckin : Infinity;

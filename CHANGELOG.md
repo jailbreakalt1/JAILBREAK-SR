@@ -4,6 +4,11 @@ All notable changes to JAILBREAK-SR.
 
 ## [Unreleased]
 
+### Fixed — autonomy scheduler never fired (spammed errors on its own bookkeeping keys)
+- **Bug** (observed live, `[AUTONOMY] _day quiet 497245h — opening an initiative window` → `[AUTONOMY] failed: Cannot destructure property 'user' of 'jidDecode(...)`): the daily-budget bookkeeping keys `_day`/`_sends` live in the same `database/checkInLastSeen.json` map as real contacts, and `runChecks()` iterated **every** key as if it were a WhatsApp JID. So each cycle it opened initiative windows for `_day`/`_sends`, crashed on `jidDecode`, and the owner (still active, under the 12h threshold — intentional) never got one. "Never once" was both bug-spam *and* correct restraint on an active user.
+- **Fix** in `brain/checkIn.js`: `runChecks()` now skips `_`-prefixed bookkeeping keys, non-JID tokens, groups, and malformed entries before considering a window. Real contacts are unaffected.
+- Verified against the live DB: `_day`/`_sends` skipped, owner remains the only candidate (quiet 4h ≈ below threshold → no spurious proactive messages).
+
 ### Fixed — "Yea" completion + delivery-promise acks never delivered the song
 - **Bug** (observed live): request chain `"Get me Kuhope"` → clarify → bot *"Here's Fusion 5 Mangwiro's "Kuhope" — … Sending it now."* → user `"Yea"` → **nothing was ever sent**. The classifier needs a fetch verb, "Yea" isn't in the bare-directive list (only `yes/yeah/yep/yup`), and the prior ack names a title with only a *delivery promise* — no "song/music/video" word — so the history resolver skipped it.
 - **Fix** in `brain/ai.js`: `yea` added to `BARE_DIRECTIVE_RE`; new `DELIVERY_PROMISE_RE` ("sending it now", "here you go", "coming up", …) lets the history resolver treat such acks as a real send; `titleFromMediaLine()` now resolves `"Artist's "Title""` possessives deterministically (→ `"Kuhope Fusion 5 Mangwiro"`) so the forced query hits the *right* version, and it never misreads casual chat ("sweet dreams", "no problem — done") as a title.
